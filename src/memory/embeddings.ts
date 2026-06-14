@@ -5,7 +5,11 @@ import type { EmbeddingProviderId, MemoryEmbeddingClient } from './types.js';
 
 const DEFAULT_OPENAI_MODEL = 'text-embedding-3-small';
 const DEFAULT_GEMINI_MODEL = 'gemini-embedding-001';
+const DEFAULT_NVIDIA_MODEL = 'baai/bge-m3';
 const DEFAULT_OLLAMA_MODEL = 'nomic-embed-text';
+// NVIDIA's build platform exposes an OpenAI-compatible /embeddings endpoint. bge-m3 (1024-dim)
+// is used because it needs no input_type parameter, unlike the nv-embedqa-* models.
+const NVIDIA_EMBED_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 const EMBEDDING_BATCH_SIZE = 64;
 const EMBEDDING_TIMEOUT_MS = 15_000;
 
@@ -27,23 +31,38 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+// A key counts only if it is set, non-empty, and not a `your-...` placeholder from
+// env.example (mirrors checkApiKeyExists in utils/env.ts). Without this, the default
+// .env's placeholder keys make `auto` resolve to a dead provider that 401s at embed time.
+function hasKey(envVar: string): boolean {
+  const v = process.env[envVar];
+  return !!v && v.trim() !== '' && !v.trim().startsWith('your-');
+}
+
 function resolveProvider(preferred: EmbeddingProviderId): ResolvedProvider | null {
-  if (preferred === 'openai' && process.env.OPENAI_API_KEY) {
+  if (preferred === 'openai' && hasKey('OPENAI_API_KEY')) {
     return 'openai';
   }
-  if (preferred === 'gemini' && process.env.GOOGLE_API_KEY) {
+  if (preferred === 'gemini' && hasKey('GOOGLE_API_KEY')) {
     return 'gemini';
+  }
+  if (preferred === 'nvidia' && hasKey('NVIDIA_API_KEY')) {
+    return 'nvidia';
   }
   if (preferred === 'ollama') {
     return 'ollama';
   }
 
   if (preferred === 'auto') {
-    if (process.env.OPENAI_API_KEY) {
+    if (hasKey('OPENAI_API_KEY')) {
       return 'openai';
     }
-    if (process.env.GOOGLE_API_KEY) {
+    if (hasKey('GOOGLE_API_KEY')) {
       return 'gemini';
+    }
+    // NVIDIA before Ollama: a configured cloud key beats a maybe-running local daemon.
+    if (hasKey('NVIDIA_API_KEY')) {
+      return 'nvidia';
     }
     if (process.env.OLLAMA_BASE_URL) {
       return 'ollama';
@@ -97,6 +116,22 @@ export function createEmbeddingClient(params: {
     });
     return {
       provider: 'gemini',
+      model,
+      embed: async (texts: string[]) =>
+        embedInBatches(texts, async (batch) => embeddings.embedDocuments(batch)),
+    };
+  }
+
+  if (resolved === 'nvidia') {
+    const model = params.model || DEFAULT_NVIDIA_MODEL;
+    // OpenAI-compatible endpoint → reuse OpenAIEmbeddings with NVIDIA's base URL + key.
+    const embeddings = new OpenAIEmbeddings({
+      apiKey: process.env.NVIDIA_API_KEY,
+      model,
+      configuration: { baseURL: process.env.NVIDIA_BASE_URL || NVIDIA_EMBED_BASE_URL },
+    });
+    return {
+      provider: 'nvidia',
       model,
       embed: async (texts: string[]) =>
         embedInBatches(texts, async (batch) => embeddings.embedDocuments(batch)),

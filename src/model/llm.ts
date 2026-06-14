@@ -15,8 +15,13 @@ import { logger } from '@/utils';
 import { classifyError, isNonRetryableError } from '@/utils/errors';
 import { resolveProvider, getProviderById } from '@/providers';
 
-export const DEFAULT_PROVIDER = 'openai';
-export const DEFAULT_MODEL = 'gpt-5.5';
+export const DEFAULT_PROVIDER = 'nvidia';
+// NVIDIA's free build platform. Default chosen by a 19-model sweep (2026-06-14) that
+// probed chat/tool-calling/structured-output/latency through this very factory, plus a
+// blind 3-lens quality judge panel: Mistral Large 3 (675B sparse MoE) tied for the best
+// research-answer quality AND had the fastest top-tier latency (~1.1s), with robust
+// multi-tool calling. Strong alternatives via /model: qwen3.5-122b-a10b, z-ai/glm-5.1.
+export const DEFAULT_MODEL = 'nvidia:mistralai/mistral-large-3-675b-instruct-2512';
 
 /**
  * Gets the fast model variant for the given provider.
@@ -94,6 +99,15 @@ const MODEL_FACTORIES: Record<string, ModelFactory> = {
       apiKey: getApiKey('OPENROUTER_API_KEY'),
       configuration: {
         baseURL: 'https://openrouter.ai/api/v1',
+      },
+    }),
+  nvidia: (name, opts) =>
+    new ChatOpenAI({
+      model: name.replace(/^nvidia:/, ''),
+      ...opts,
+      apiKey: getApiKey('NVIDIA_API_KEY'),
+      configuration: {
+        baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
       },
     }),
   moonshot: (name, opts) =>

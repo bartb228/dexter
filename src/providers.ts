@@ -76,6 +76,19 @@ export const PROVIDERS: ProviderDef[] = [
     contextWindow: 128_000,
   },
   {
+    id: 'nvidia',
+    displayName: 'NVIDIA',
+    // OpenAI-compatible endpoint (integrate.api.nvidia.com). Models are namespaced
+    // (e.g. 'meta/llama-3.3-70b-instruct'), so we route on the 'nvidia:' prefix and
+    // strip it in the factory — same scheme as OpenRouter/Ollama.
+    modelPrefix: 'nvidia:',
+    apiKeyEnvVar: 'NVIDIA_API_KEY',
+    // gpt-oss-20b won the sweep's fast tier: full chat+tools+structured at ~0.9s — ideal
+    // for getFastModel() lightweight work (summarization, microcompact).
+    fastModel: 'nvidia:openai/gpt-oss-20b',
+    contextWindow: 128_000,
+  },
+  {
     id: 'ollama',
     displayName: 'Ollama',
     modelPrefix: 'ollama:',

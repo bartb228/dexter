@@ -25,7 +25,7 @@ interface Config {
   webSearchPreferredProvider?: 'exa' | 'perplexity' | 'tavily';
   memory?: {
     enabled?: boolean;
-    embeddingProvider?: 'openai' | 'gemini' | 'ollama' | 'auto';
+    embeddingProvider?: 'openai' | 'gemini' | 'nvidia' | 'ollama' | 'auto';
     embeddingModel?: string;
     maxSessionContextTokens?: number;
   };

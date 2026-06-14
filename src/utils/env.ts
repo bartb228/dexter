@@ -100,13 +100,14 @@ export function saveApiKeyForProvider(providerId: string, apiKey: string): boole
   return saveApiKeyToEnv(apiKeyName, apiKey);
 }
 
-export type SearchProviderId = 'exa' | 'perplexity' | 'tavily' | 'langsearch';
+export type SearchProviderId = 'exa' | 'perplexity' | 'tavily' | 'langsearch' | 'brave';
 
 export const SEARCH_PROVIDERS: Record<SearchProviderId, { displayName: string; apiKeyEnvVar: string }> = {
   exa: { displayName: 'Exa', apiKeyEnvVar: 'EXASEARCH_API_KEY' },
   perplexity: { displayName: 'Perplexity', apiKeyEnvVar: 'PERPLEXITY_API_KEY' },
   tavily: { displayName: 'Tavily', apiKeyEnvVar: 'TAVILY_API_KEY' },
   langsearch: { displayName: 'LangSearch', apiKeyEnvVar: 'LANGSEARCH_API_KEY' },
+  brave: { displayName: 'Brave', apiKeyEnvVar: 'BRAVE_SEARCH_API_KEY' },
 };
 
 export function getSearchProviderDisplayName(providerId: SearchProviderId): string {
