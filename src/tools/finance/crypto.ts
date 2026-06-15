@@ -2,6 +2,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
+import { isEdgarBackend, edgarUnsupported } from './edgar/index.js';
 
 const CryptoPriceSnapshotInputSchema = z.object({
   ticker: z
@@ -16,6 +17,7 @@ export const getCryptoPriceSnapshot = new DynamicStructuredTool({
   description: `Fetches the most recent price snapshot for a specific cryptocurrency, including the latest price, trading volume, and other open, high, low, and close price data. Ticker format: use 'CRYPTO-USD' for USD prices (e.g., 'BTC-USD') or 'CRYPTO-CRYPTO' for crypto-to-crypto prices (e.g., 'BTC-ETH' for Bitcoin priced in Ethereum).`,
   schema: CryptoPriceSnapshotInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Crypto prices');
     const params = { ticker: input.ticker };
     const { data, url } = await api.get('/crypto/prices/snapshot/', params);
     return formatToolResult(data.snapshot || {}, [url]);
@@ -45,6 +47,7 @@ export const getCryptoPrices = new DynamicStructuredTool({
   description: `Retrieves historical price data for a cryptocurrency over a specified date range, including open, high, low, close prices, and volume. Ticker format: use 'CRYPTO-USD' for USD prices (e.g., 'BTC-USD') or 'CRYPTO-CRYPTO' for crypto-to-crypto prices (e.g., 'BTC-ETH' for Bitcoin priced in Ethereum).`,
   schema: CryptoPricesInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Crypto prices');
     const params = {
       ticker: input.ticker,
       interval: input.interval,
@@ -66,6 +69,7 @@ export const getCryptoTickers = new DynamicStructuredTool({
   description: `Retrieves the list of available cryptocurrency tickers that can be used with the crypto price tools.`,
   schema: z.object({}),
   func: async () => {
+    if (isEdgarBackend()) return edgarUnsupported('Crypto tickers');
     const { data, url } = await api.get('/crypto/prices/tickers/', {}, { cacheable: true, ttlMs: 24 * 60 * 60 * 1000 });
     return formatToolResult(data.tickers || [], [url]);
   },

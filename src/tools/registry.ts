@@ -18,6 +18,7 @@ import { SCREEN_STOCKS_DESCRIPTION } from './finance/screen-stocks.js';
 import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh.js';
 import { isEdgarBackend } from './finance/edgar/index.js';
 import { kronosPredict, kronosAvailable, KRONOS_PREDICT_DESCRIPTION } from './finance/kronos.js';
+import { quantSignals, quantSignalsAvailable, QUANT_SIGNALS_DESCRIPTION } from './finance/quant-signals.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
 import { memoryGetTool, MEMORY_GET_DESCRIPTION, memorySearchTool, MEMORY_SEARCH_DESCRIPTION, memoryUpdateTool, MEMORY_UPDATE_DESCRIPTION } from './memory/index.js';
@@ -193,6 +194,17 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: WEB_SEARCH_DESCRIPTION,
       compactDescription: 'Search the web for current information. Returns titles, URLs, and snippets.',
       concurrencySafe: true,
+    });
+  }
+
+  // Quant signals from ai-hedge-fund (only when that project is present locally).
+  if (quantSignalsAvailable()) {
+    tools.push({
+      name: 'quant_signals',
+      tool: quantSignals,
+      description: QUANT_SIGNALS_DESCRIPTION,
+      compactDescription: 'Deterministic quant scorecard (Mohanram G-Score, Beneish M-Score, quality factors) from SEC fundamentals.',
+      concurrencySafe: false,
     });
   }
 

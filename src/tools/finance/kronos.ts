@@ -37,8 +37,9 @@ function runKronos(args: string[]): Promise<ProcResult> {
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), KRONOS_TIMEOUT_MS);
-    child.stdout.on('data', (d) => { if (stdout.length < MAX_BUF) stdout += d.toString(); });
-    child.stderr.on('data', (d) => { if (stderr.length < MAX_BUF) stderr += d.toString(); });
+    // Keep the TAIL — the JSON object is the last line, so cap from the front.
+    child.stdout.on('data', (d) => { stdout += d.toString(); if (stdout.length > MAX_BUF) stdout = stdout.slice(-MAX_BUF); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > MAX_BUF) stderr = stderr.slice(-MAX_BUF); });
     child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, stdout, stderr: String(e), code: null }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, stdout, stderr, code }); });
   });
@@ -72,15 +73,17 @@ bars plus the expected percent change and direction.
 
 ## Notes
 
-- Registered tickers: NVDA, AAPL, MSFT, TSLA, SPY, QQQ, BTCUSDT, ETHUSDT.
+- Works for ANY US-listed stock/ETF ticker (auto-fetched on demand) plus major crypto
+  pairs like BTCUSDT/ETHUSDT. Common examples: NVDA, AAPL, MSFT, TSLA, SPY, QQQ.
 - Output is a probabilistic statistical forecast, NOT investment advice — say so.
-- A single call can take ~10-30s (model load + sampling).
+- A single call can take ~10-30s (model load + sampling; first use of a new ticker
+  also downloads its history).
 `.trim();
 
 const KronosInputSchema = z.object({
   ticker: z
     .string()
-    .describe('Asset to forecast. Registered: NVDA, AAPL, MSFT, TSLA, SPY, QQQ, BTCUSDT, ETHUSDT.'),
+    .describe('Asset to forecast — any US-listed stock/ETF symbol (e.g. NVDA, GOOGL, AMZN) or a crypto pair (e.g. BTCUSDT). Auto-fetched on demand.'),
   horizon: z
     .number()
     .int()
@@ -93,7 +96,7 @@ const KronosInputSchema = z.object({
 export const kronosPredict = new DynamicStructuredTool({
   name: 'kronos_predict',
   description:
-    'Forecast an asset\'s near-term price path with the local Kronos K-line foundation model. Returns predicted OHLCV candles, expected % change, and direction. Registered tickers: NVDA, AAPL, MSFT, TSLA, SPY, QQQ, BTCUSDT, ETHUSDT. Output is a statistical forecast, not investment advice.',
+    'Forecast an asset\'s near-term price path with the local Kronos K-line foundation model. Returns predicted OHLCV candles, expected % change, and direction. Works for any US-listed stock/ETF (e.g. NVDA, GOOGL, AMZN) or major crypto pair (e.g. BTCUSDT). Output is a statistical forecast, not investment advice.',
   schema: KronosInputSchema,
   func: async (input) => {
     const ticker = input.ticker.trim().toUpperCase();

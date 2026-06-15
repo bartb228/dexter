@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_24H } from './utils.js';
+import { isEdgarBackend, edgarUnsupported } from './edgar/index.js';
 
 const EarningsInputSchema = z.object({
   ticker: z
@@ -24,6 +25,7 @@ export const getEarnings = new DynamicStructuredTool({
     'Fetches earnings data from Financial Datasets. Pass a ticker for company-specific earnings, or omit ticker to fetch the latest earnings feed across all covered companies.',
   schema: EarningsInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Earnings calendar/surprises', 'Use get_financials for reported results.');
     const ticker = input.ticker?.trim().toUpperCase();
     const params = {
       ticker: ticker || undefined,

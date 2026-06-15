@@ -1,7 +1,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
-import { logger } from '@/utils';
+import { logger } from '../../utils/logger.js';
 
 const BRAVE_API_URL = 'https://api.search.brave.com/res/v1/web/search';
 
