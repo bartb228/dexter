@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_24H } from './utils.js';
-import { isEdgarBackend, edgarFilings, edgarFilingText } from './edgar/index.js';
+import { isEdgarBackend, edgarFilings, edgarFilingText, FRESHNESS_LIVE_SEC } from './edgar/index.js';
 import { logger } from '../../utils/logger.js';
 
 // Types for filing item metadata
@@ -87,7 +87,7 @@ export const getFilings = new DynamicStructuredTool({
       try {
         const filings = await edgarFilings(input.ticker, input.filing_type, input.limit);
         if (filings.length) {
-          return formatToolResult(filings, [`https://data.sec.gov (EDGAR submissions: ${input.ticker.toUpperCase()})`]);
+          return formatToolResult(filings, [`https://data.sec.gov (EDGAR submissions: ${input.ticker.toUpperCase()})`, FRESHNESS_LIVE_SEC]);
         }
         logger.info(`[EDGAR] no filings for ${input.ticker}; falling back to FD`);
       } catch (e) {
@@ -110,7 +110,7 @@ async function edgarFilingItemsOrNull(ticker: string, accession: string): Promis
   if (!isEdgarBackend()) return null;
   try {
     const filing = await edgarFilingText(ticker, accession);
-    if (filing) return formatToolResult(filing, [filing.url]);
+    if (filing) return formatToolResult(filing, [filing.url, FRESHNESS_LIVE_SEC]);
     logger.info(`[EDGAR] filing ${accession} not found for ${ticker}; falling back to FD`);
   } catch (e) {
     logger.warn(`[EDGAR] filing text failed (${ticker} ${accession}); falling back to FD: ${e instanceof Error ? e.message : String(e)}`);

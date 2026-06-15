@@ -2,7 +2,7 @@
  * EDGAR backend entry point. Dexter's finance fetchers dispatch here when
  * `DATA_BACKEND=edgar`; otherwise the paid Financial Datasets path is used.
  */
-import { getCik, getCompanyFacts } from './client.js';
+import { getCik, getCompanyFacts, companyFactsCacheAgeHours, FACTS_TTL_HOURS } from './client.js';
 import {
   buildIncomeStatements,
   buildBalanceSheets,
@@ -15,6 +15,20 @@ import {
 /** True when the free SEC EDGAR backend is selected. FD remains the default. */
 export function isEdgarBackend(): boolean {
   return (process.env.DATA_BACKEND || '').toLowerCase() === 'edgar';
+}
+
+// ── freshness stamping ──────────────────────────────────────────────────────────
+// Appended to a tool's sourceUrls so the agent (and user) can see how fresh the data
+// is. Fundamentals come from the 24h companyfacts cache; prices/filings/insider are live.
+export const FRESHNESS_LIVE_PRICE = 'freshness: live — real-time price provider (not cached)';
+export const FRESHNESS_LIVE_SEC = 'freshness: live — SEC submissions feed (not cached)';
+
+/** Freshness label for companyfacts-derived results (financials, key ratios). */
+export async function fundamentalsFreshness(ticker: string): Promise<string> {
+  const cik = await getCik(ticker);
+  const age = cik ? companyFactsCacheAgeHours(cik) : null;
+  if (age === null) return 'freshness: companyfacts just fetched from SEC (live)';
+  return `freshness: companyfacts cached ${age.toFixed(1)}h ago (auto-refreshes after ${FACTS_TTL_HOURS}h; run edgar_refresh to force)`;
 }
 
 /** EDGAR serves annual + quarterly fundamentals; `ttm` falls back to FD (returns null). */

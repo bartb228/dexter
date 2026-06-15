@@ -2,7 +2,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
-import { isEdgarBackend } from './edgar/index.js';
+import { isEdgarBackend, FRESHNESS_LIVE_PRICE } from './edgar/index.js';
 import { hasPriceProvider, edgarStockPrices, edgarStockSnapshot } from './edgar/prices.js';
 import { logger } from '../../utils/logger.js';
 
@@ -28,7 +28,7 @@ export const getStockPrice = new DynamicStructuredTool({
     if (isEdgarBackend() && hasPriceProvider()) {
       try {
         const snap = await edgarStockSnapshot(ticker);
-        if (snap) return formatToolResult(snap, ['https://polygon.io / tiingo.com (keyed price provider)']);
+        if (snap) return formatToolResult(snap, ['https://polygon.io / tiingo.com (keyed price provider)', FRESHNESS_LIVE_PRICE]);
         logger.info(`[Prices] no snapshot for ${ticker}; falling back to FD`);
       } catch (e) {
         logger.warn(`[Prices] snapshot failed (${ticker}); falling back to FD: ${e instanceof Error ? e.message : String(e)}`);
@@ -63,7 +63,7 @@ export const getStockPrices = new DynamicStructuredTool({
     if (isEdgarBackend() && hasPriceProvider()) {
       try {
         const bars = await edgarStockPrices(ticker, input.interval, input.start_date, input.end_date);
-        if (bars.length) return formatToolResult(bars, ['https://polygon.io / tiingo.com (keyed price provider)']);
+        if (bars.length) return formatToolResult(bars, ['https://polygon.io / tiingo.com (keyed price provider)', FRESHNESS_LIVE_PRICE]);
         logger.info(`[Prices] no bars for ${ticker} ${input.start_date}..${input.end_date}; falling back to FD`);
       } catch (e) {
         logger.warn(`[Prices] history failed (${ticker}); falling back to FD: ${e instanceof Error ? e.message : String(e)}`);

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { api, stripFieldsDeep } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_1H } from './utils.js';
-import { isEdgarBackend, edgarInsiderTrades } from './edgar/index.js';
+import { isEdgarBackend, edgarInsiderTrades, FRESHNESS_LIVE_SEC } from './edgar/index.js';
 import { logger } from '../../utils/logger.js';
 
 const REDUNDANT_INSIDER_FIELDS = ['issuer'] as const;
@@ -77,7 +77,7 @@ export const getInsiderTrades = new DynamicStructuredTool({
         if (filtered.length) {
           return formatToolResult(
             stripFieldsDeep(filtered, REDUNDANT_INSIDER_FIELDS),
-            [`https://data.sec.gov (EDGAR Form 4: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR Form 4: ${input.ticker.toUpperCase()})`, FRESHNESS_LIVE_SEC],
           );
         }
         logger.info(`[EDGAR] no Form 4 insider trades for ${input.ticker}; falling back to FD`);

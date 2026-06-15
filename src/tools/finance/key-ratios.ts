@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { api, stripFieldsDeep } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_1H, TTL_6H } from './utils.js';
-import { isEdgarBackend, edgarServesPeriod, edgarKeyRatiosSnapshot, edgarHistoricalKeyRatios } from './edgar/index.js';
+import { isEdgarBackend, edgarServesPeriod, edgarKeyRatiosSnapshot, edgarHistoricalKeyRatios, fundamentalsFreshness } from './edgar/index.js';
 import { logger } from '../../utils/logger.js';
 
 const REDUNDANT_FINANCIAL_FIELDS = ['accession_number', 'currency', 'period'] as const;
@@ -25,7 +25,7 @@ export const getKeyRatios = new DynamicStructuredTool({
     if (isEdgarBackend()) {
       try {
         const snap = await edgarKeyRatiosSnapshot(ticker);
-        if (snap) return formatToolResult(snap, [`https://data.sec.gov (EDGAR-derived metrics: ${ticker})`]);
+        if (snap) return formatToolResult(snap, [`https://data.sec.gov (EDGAR-derived metrics: ${ticker})`, await fundamentalsFreshness(ticker)]);
         logger.info(`[EDGAR] no key-ratios snapshot for ${ticker}; falling back to FD`);
       } catch (e) {
         logger.warn(`[EDGAR] key-ratios snapshot failed (${ticker}); falling back to FD: ${e instanceof Error ? e.message : String(e)}`);
@@ -90,7 +90,7 @@ export const getHistoricalKeyRatios = new DynamicStructuredTool({
         if (rows.length) {
           return formatToolResult(
             stripFieldsDeep(rows, REDUNDANT_FINANCIAL_FIELDS),
-            [`https://data.sec.gov (EDGAR-derived metrics: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR-derived metrics: ${input.ticker.toUpperCase()})`, await fundamentalsFreshness(input.ticker)],
           );
         }
         logger.info(`[EDGAR] no historical key ratios for ${input.ticker} (${input.period}); falling back to FD`);

@@ -202,6 +202,21 @@ export interface CompanyFacts {
   facts: { 'us-gaap'?: Record<string, { units: Record<string, ConceptFact[]> }>; [taxon: string]: unknown };
 }
 
+/** Hours since the companyfacts cache file for this CIK was written, or null if not
+ *  cached (i.e. it will be / was just fetched live). Used for freshness stamping. */
+export function companyFactsCacheAgeHours(cik: string): number | null {
+  const file = `${CACHE_DIR}/facts_${cik}.json`;
+  try {
+    if (!existsSync(file)) return null;
+    return (Date.now() - statSync(file).mtimeMs) / 3_600_000;
+  } catch {
+    return null;
+  }
+}
+
+/** companyfacts cache lifetime in hours (for freshness messaging). */
+export const FACTS_TTL_HOURS = FACTS_TTL_MS / 3_600_000;
+
 export async function getCompanyFacts(cik: string): Promise<CompanyFacts> {
   const file = `${CACHE_DIR}/facts_${cik}.json`;
   const cached = readCache<CompanyFacts>(file, FACTS_TTL_MS);

@@ -10,6 +10,7 @@ import {
   edgarBalanceSheets,
   edgarCashFlowStatements,
   edgarAllFinancials,
+  fundamentalsFreshness,
 } from './edgar/index.js';
 import { logger } from '../../utils/logger.js';
 
@@ -83,7 +84,7 @@ export const getIncomeStatements = new DynamicStructuredTool({
         if (statements.length) {
           return formatToolResult(
             stripFieldsDeep(statements, REDUNDANT_FINANCIAL_FIELDS),
-            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`, await fundamentalsFreshness(input.ticker)],
           );
         }
         logger.info(`[EDGAR] no income statements for ${input.ticker} (${input.period}); falling back to FD`);
@@ -111,7 +112,7 @@ export const getBalanceSheets = new DynamicStructuredTool({
         if (sheets.length) {
           return formatToolResult(
             stripFieldsDeep(sheets, REDUNDANT_FINANCIAL_FIELDS),
-            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`, await fundamentalsFreshness(input.ticker)],
           );
         }
         logger.info(`[EDGAR] no balance sheets for ${input.ticker} (${input.period}); falling back to FD`);
@@ -139,7 +140,7 @@ export const getCashFlowStatements = new DynamicStructuredTool({
         if (flows.length) {
           return formatToolResult(
             stripFieldsDeep(flows, REDUNDANT_FINANCIAL_FIELDS),
-            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`, await fundamentalsFreshness(input.ticker)],
           );
         }
         logger.info(`[EDGAR] no cash flow statements for ${input.ticker} (${input.period}); falling back to FD`);
@@ -167,7 +168,7 @@ export const getAllFinancialStatements = new DynamicStructuredTool({
         if (all && all.income_statements.length) {
           return formatToolResult(
             stripFieldsDeep(all, REDUNDANT_FINANCIAL_FIELDS),
-            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`],
+            [`https://data.sec.gov (EDGAR companyfacts: ${input.ticker.toUpperCase()})`, await fundamentalsFreshness(input.ticker)],
           );
         }
         logger.info(`[EDGAR] no combined financials for ${input.ticker} (${input.period}); falling back to FD`);
