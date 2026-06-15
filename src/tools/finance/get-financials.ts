@@ -2,11 +2,12 @@ import { DynamicStructuredTool, StructuredToolInterface } from '@langchain/core/
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { AIMessage, ToolCall } from '@langchain/core/messages';
 import { z } from 'zod';
-import { callLlm } from '../../model/llm.js';
+import { callLlm, getFastModel } from '../../model/llm.js';
 import { formatToolResult } from '../types.js';
 import { getCurrentDate } from '../../agent/prompts.js';
 import { withTimeout, SUB_TOOL_TIMEOUT_MS } from './utils.js';
 import { FINANCIAL_FORMATTERS } from './formatters.js';
+import { resolveProvider } from '../../providers.js';
 
 /**
  * Rich description for the get_financials tool.
@@ -138,10 +139,13 @@ export function createGetFinancials(model: string): DynamicStructuredTool {
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;
 
-      // 1. Call LLM with finance tools bound (native tool calling)
+      // 1. Route with the provider's FAST (non-reasoning) model — tool-selection is a
+      //    simple classification; reasoning models can emit think-tokens that yield no
+      //    tool_call ("No tools selected"). The main model still writes the answer.
       onProgress?.('Fetching...');
+      const routingModel = getFastModel(resolveProvider(model).id, model);
       const { response } = await callLlm(input.query, {
-        model,
+        model: routingModel,
         systemPrompt: buildRouterPrompt(),
         tools: FINANCE_TOOLS,
       });

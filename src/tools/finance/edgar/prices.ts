@@ -93,11 +93,46 @@ export async function edgarStockPrices(ticker: string, interval: Interval, start
 }
 
 /**
- * Latest-close snapshot derived from the most recent daily bar (last ~7 days).
- * Returns FD-snapshot shape `{ price, close, open, high, low, volume, time }` or
- * null when no recent bar is available.
+ * Near-real-time quote from Tiingo's free IEX endpoint (current-day, ~15-min delayed) —
+ * gives a CURRENT price rather than the previous daily close. Returns null on miss.
+ */
+async function tiingoIexQuote(ticker: string): Promise<Record<string, unknown> | null> {
+  const key = process.env.TIINGO_API_KEY;
+  if (!key) return null;
+  const sym = encodeURIComponent(ticker.toUpperCase());
+  const res = await fetch(`https://api.tiingo.com/iex/?tickers=${sym}&token=${encodeURIComponent(key)}`);
+  if (!res.ok) throw new Error(`Tiingo IEX ${res.status}`);
+  const arr = (await res.json()) as Array<{ last?: number; tngoLast?: number; prevClose?: number; open?: number; high?: number; low?: number; volume?: number; timestamp?: string }>;
+  const q = Array.isArray(arr) ? arr[0] : null;
+  const price = q?.tngoLast ?? q?.last ?? q?.prevClose;
+  if (!q || price == null) return null;
+  return {
+    ticker: ticker.toUpperCase(),
+    price,
+    close: price,
+    prev_close: q.prevClose ?? null,
+    open: q.open ?? null,
+    high: q.high ?? null,
+    low: q.low ?? null,
+    volume: q.volume ?? null,
+    time: q.timestamp ?? null,
+    source: 'tiingo-iex (near-real-time, ~15-min delayed)',
+  };
+}
+
+/**
+ * Current-price snapshot: prefer the near-real-time Tiingo IEX quote (today's price);
+ * fall back to the most recent daily bar's close (last ~7 days) if IEX is unavailable.
+ * Returns FD-snapshot shape `{ price, close, open, high, low, volume, time }` or null.
  */
 export async function edgarStockSnapshot(ticker: string): Promise<Record<string, unknown> | null> {
+  // Near-real-time first so "current price" isn't a stale prior close.
+  try {
+    const live = await tiingoIexQuote(ticker);
+    if (live) return live;
+  } catch (e) {
+    logger.warn(`[Prices] Tiingo IEX failed (${ticker}); falling back to last daily close: ${e instanceof Error ? e.message : String(e)}`);
+  }
   // Look back a week to skip weekends/holidays; dates are UTC ISO.
   const today = new Date();
   const end = today.toISOString().slice(0, 10);
