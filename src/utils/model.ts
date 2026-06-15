@@ -38,7 +38,9 @@ const PROVIDER_MODELS: Record<string, Model[]> = {
   // (stripped in the model factory before the API call). Order = sweep ranking
   // (2026-06-14): best main first, then alternatives, fast model, baseline, flagship.
   nvidia: [
-    { id: 'nvidia:mistralai/mistral-large-3-675b-instruct-2512', displayName: 'Mistral Large 3 (free, best)' },
+    { id: 'nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5', displayName: 'Nemotron Super 49B (free, reasoning)' },
+    { id: 'nvidia:nvidia/nemotron-3-super-120b-a12b', displayName: 'Nemotron Super 120B (free, reasoning, slow)' },
+    { id: 'nvidia:mistralai/mistral-large-3-675b-instruct-2512', displayName: 'Mistral Large 3 (free, fast)' },
     { id: 'nvidia:qwen/qwen3.5-122b-a10b', displayName: 'Qwen 3.5 122B (free)' },
     { id: 'nvidia:z-ai/glm-5.1', displayName: 'GLM 5.1 (free)' },
     { id: 'nvidia:openai/gpt-oss-120b', displayName: 'GPT-OSS 120B (free)' },
