@@ -147,16 +147,34 @@ export class ChatLogComponent extends Container {
     this.tui = tui;
   }
 
-  clearAll() {
-    // Stop any running spinners before clearing
+  /**
+   * Stop any still-running tool/subagent spinners. Each active tool subscribes to the
+   * shared 50ms spinner clock and is expected to unsubscribe on its terminal event
+   * (complete/error/dispose). If a terminal event is ever missed, the leaked
+   * subscription keeps that clock ticking `requestRender()` forever — input lag that
+   * grows with use and never recovers. Call this whenever a turn ends to guarantee no
+   * spinner outlives it. `dispose()` is idempotent, so already-finalized tools are
+   * unaffected, and disposing the subagent group unsubscribes it even when its per-call
+   * handles (stored in `toolById`) didn't drive its `activeCount` to zero.
+   */
+  disposeActiveTools() {
     for (const component of this.toolById.values()) {
       component.dispose?.();
     }
     this.currentSubagentGroup?.dispose();
+    // Drop the per-turn grouping refs once disposed. The subagent group's spinner is
+    // wired only in its constructor, so a disposed group can never animate again —
+    // leaving the ref set would make the next `spawn_subagent` reuse a dead group with
+    // no spinner. A new turn should start fresh grouping regardless.
+    this.currentSubagentGroup = null;
+    this.currentBrowserSession = null;
+  }
+
+  clearAll() {
+    // Stop any running spinners before clearing
+    this.disposeActiveTools();
     this.clear();
     this.toolById.clear();
-    this.currentBrowserSession = null;
-    this.currentSubagentGroup = null;
     this.activeAnswer = null;
     this.lastToolName = null;
     this.lastToolComponent = null;

@@ -272,6 +272,10 @@ export async function runCli() {
           lastRenderedAnswer = true;
         }
         if (lastItem.status === 'complete' && lastRenderedStatus !== 'complete') {
+          // A completed turn must leave nothing spinning. Any tool that went active but
+          // whose terminal event was missed would otherwise keep its spinner subscribed,
+          // pinning the shared 50ms render clock on forever (cumulative input lag).
+          chatLog.disposeActiveTools();
           chatLog.addPerformanceStats(lastItem.duration ?? 0, lastItem.tokenUsage, lastItem.tokensPerSecond);
         }
         if (lastItem.status === 'interrupted' && lastRenderedStatus !== 'interrupted') {
@@ -283,6 +287,9 @@ export async function runCli() {
               finalizedToolIds.add(display.id);
             }
           }
+          // Belt-and-braces: also drain the subagent group spinner, whose unsubscribe is
+          // gated on every line reaching a terminal state (handles alone may not).
+          chatLog.disposeActiveTools();
           chatLog.addInterrupted();
         }
         lastRenderedStatus = lastItem.status;

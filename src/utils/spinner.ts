@@ -64,3 +64,13 @@ export function subscribeSpinner(cb: SpinnerSubscriber): () => void {
 export function currentSpinnerFrame(): string {
   return SPINNER_FRAMES[frameIndex];
 }
+
+/**
+ * Whether the shared spinner clock is currently running (i.e. there is at least one
+ * live subscriber). When the app is idle this MUST be false — a true value while idle
+ * means a component leaked its subscription and the 50ms `requestRender()` loop is
+ * pinned on, degrading input responsiveness. Exposed for diagnostics and tests.
+ */
+export function isSpinnerActive(): boolean {
+  return interval !== null;
+}
