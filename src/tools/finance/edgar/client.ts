@@ -100,11 +100,20 @@ export async function getSubmissions(cik: string): Promise<Submissions> {
 // ── ticker → CIK ────────────────────────────────────────────────────────────────
 interface TickerEntry { cik_str: number; ticker: string; title: string }
 let tickerMapCache: Map<string, string> | null = null;
+let tickerMapLoadedAt = 0; // when the in-memory map was built (for TTL expiry in a long-running process)
+let lastForcedRefreshAt = 0; // rate-limit force-refetches triggered by cache misses
+// On an unknown ticker (e.g. a same-week IPO not yet in the cached map), re-fetch the
+// live map at most this often so a brand-new symbol resolves without a stale-cache delay.
+const FORCED_REFRESH_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
-async function loadTickerMap(): Promise<Map<string, string>> {
-  if (tickerMapCache) return tickerMapCache;
+async function loadTickerMap(force = false): Promise<Map<string, string>> {
+  // In-memory cache respects the disk TTL so a long-lived process picks up SEC's ~daily
+  // ticker-map refresh instead of pinning the first load for its whole lifetime.
+  const inMemoryFresh = tickerMapCache && Date.now() - tickerMapLoadedAt < TICKERS_TTL_MS;
+  if (tickerMapCache && inMemoryFresh && !force) return tickerMapCache;
+
   const file = `${CACHE_DIR}/company_tickers.json`;
-  let raw = readCache<Record<string, TickerEntry>>(file, TICKERS_TTL_MS);
+  let raw = force ? null : readCache<Record<string, TickerEntry>>(file, TICKERS_TTL_MS);
   if (!raw) {
     raw = await fetchJson<Record<string, TickerEntry>>(SEC_TICKERS_URL);
     writeCacheSafe(file, raw);
@@ -116,18 +125,31 @@ async function loadTickerMap(): Promise<Map<string, string>> {
     }
   }
   tickerMapCache = map;
+  tickerMapLoadedAt = Date.now();
   return map;
+}
+
+function lookupCik(map: Map<string, string>, ticker: string): string | null {
+  const t = ticker.toUpperCase().trim();
+  return map.get(t) ?? map.get(t.replace(/\./g, '-')) ?? map.get(t.replace(/-/g, '.')) ?? null;
 }
 
 /**
  * Resolve a ticker to its zero-padded 10-digit CIK. Handles dual-class share
  * classes: SEC uses a DASH (BRK-B) while users often type a DOT (BRK.B), so we
- * try the symbol as-is, then swap dot↔dash. Returns null if unknown.
+ * try the symbol as-is, then swap dot↔dash.
+ *
+ * Refresh-on-miss: if the ticker isn't in the (possibly day-old) cached map — the
+ * case for a same-week IPO like SPCX — force one live re-fetch (rate-limited) and
+ * retry, so brand-new symbols resolve without waiting for the 24h TTL. Returns null
+ * only if it's still unknown after a fresh map.
  */
 export async function getCik(ticker: string): Promise<string | null> {
-  const map = await loadTickerMap();
-  const t = ticker.toUpperCase().trim();
-  return map.get(t) ?? map.get(t.replace(/\./g, '-')) ?? map.get(t.replace(/-/g, '.')) ?? null;
+  const hit = lookupCik(await loadTickerMap(), ticker);
+  if (hit) return hit;
+  if (Date.now() - lastForcedRefreshAt < FORCED_REFRESH_MIN_INTERVAL_MS) return null;
+  lastForcedRefreshAt = Date.now();
+  return lookupCik(await loadTickerMap(true), ticker);
 }
 
 // ── companyfacts ─────────────────────────────────────────────────────────────
