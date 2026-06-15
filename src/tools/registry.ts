@@ -17,6 +17,7 @@ import { READ_FILINGS_DESCRIPTION } from './finance/read-filings.js';
 import { SCREEN_STOCKS_DESCRIPTION } from './finance/screen-stocks.js';
 import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh.js';
 import { isEdgarBackend } from './finance/edgar/index.js';
+import { kronosPredict, kronosAvailable, KRONOS_PREDICT_DESCRIPTION } from './finance/kronos.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
 import { memoryGetTool, MEMORY_GET_DESCRIPTION, memorySearchTool, MEMORY_SEARCH_DESCRIPTION, memoryUpdateTool, MEMORY_UPDATE_DESCRIPTION } from './memory/index.js';
@@ -192,6 +193,17 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: WEB_SEARCH_DESCRIPTION,
       compactDescription: 'Search the web for current information. Returns titles, URLs, and snippets.',
       concurrencySafe: true,
+    });
+  }
+
+  // Kronos price-forecasting (only when the local Kronos project is present).
+  if (kronosAvailable()) {
+    tools.push({
+      name: 'kronos_predict',
+      tool: kronosPredict,
+      description: KRONOS_PREDICT_DESCRIPTION,
+      compactDescription: 'Forecast an asset\'s near-term price path (OHLCV + direction) with the local Kronos model.',
+      concurrencySafe: false,
     });
   }
 
