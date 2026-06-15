@@ -15,6 +15,8 @@ import { GET_FINANCIALS_DESCRIPTION } from './finance/get-financials.js';
 import { GET_MARKET_DATA_DESCRIPTION } from './finance/get-market-data.js';
 import { READ_FILINGS_DESCRIPTION } from './finance/read-filings.js';
 import { SCREEN_STOCKS_DESCRIPTION } from './finance/screen-stocks.js';
+import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh.js';
+import { isEdgarBackend } from './finance/edgar/index.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
 import { memoryGetTool, MEMORY_GET_DESCRIPTION, memorySearchTool, MEMORY_SEARCH_DESCRIPTION, memoryUpdateTool, MEMORY_UPDATE_DESCRIPTION } from './memory/index.js';
@@ -190,6 +192,17 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: WEB_SEARCH_DESCRIPTION,
       compactDescription: 'Search the web for current information. Returns titles, URLs, and snippets.',
       concurrencySafe: true,
+    });
+  }
+
+  // EDGAR-only: lets the agent clear stale cached SEC data on demand.
+  if (isEdgarBackend()) {
+    tools.push({
+      name: 'edgar_refresh',
+      tool: edgarRefresh,
+      description: EDGAR_REFRESH_DESCRIPTION,
+      compactDescription: 'Clear the cached SEC EDGAR data so the next finance request fetches fresh data.',
+      concurrencySafe: false,
     });
   }
 

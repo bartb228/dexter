@@ -9,7 +9,8 @@
  * traffic without one), and requests are paced to ≤10 req/s. Responses are cached
  * to `.dexter/cache/edgar/` (companyfacts is large; ticker→CIK map is small).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import { dexterPath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -150,6 +151,39 @@ export async function getCik(ticker: string): Promise<string | null> {
   if (Date.now() - lastForcedRefreshAt < FORCED_REFRESH_MIN_INTERVAL_MS) return null;
   lastForcedRefreshAt = Date.now();
   return lookupCik(await loadTickerMap(true), ticker);
+}
+
+/**
+ * Clear the on-disk EDGAR cache (ticker→CIK map + companyfacts) and reset the
+ * in-memory ticker map, so the next request re-fetches fresh data from SEC.
+ *
+ * SCOPED STRICTLY to CACHE_DIR: only deletes regular `*.json` files directly
+ * inside `.dexter/cache/edgar/` — never recurses, never touches anything else.
+ * Returns the names of the files removed. Live data (filings/insider/prices) is
+ * uncached and unaffected.
+ */
+export function clearEdgarCache(): { cleared: string[] } {
+  tickerMapCache = null;
+  tickerMapLoadedAt = 0;
+  const cleared: string[] = [];
+  try {
+    if (!existsSync(CACHE_DIR)) return { cleared };
+    for (const name of readdirSync(CACHE_DIR)) {
+      if (!name.endsWith('.json')) continue; // only our cache files
+      const path = join(CACHE_DIR, name);
+      try {
+        if (statSync(path).isFile()) {
+          unlinkSync(path);
+          cleared.push(name);
+        }
+      } catch (e) {
+        logger.warn(`[EDGAR] cache clear skipped ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  } catch (e) {
+    logger.warn(`[EDGAR] cache clear failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return { cleared };
 }
 
 // ── companyfacts ─────────────────────────────────────────────────────────────
