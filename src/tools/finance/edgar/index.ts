@@ -57,6 +57,7 @@ export { fetchInsiderTrades as edgarInsiderTrades } from './insider.js';
 export { edgarKeyRatiosSnapshot, edgarHistoricalKeyRatios } from './metrics.js';
 export { edgarFilings, edgarFilingText } from './filings.js';
 export { clearEdgarCache } from './client.js';
+export { edgarInstitutionalHoldings, edgarInstitutionalInvestors } from './institutional.js';
 
 /**
  * Income statements from SEC companyfacts, shaped like FD's `income_statements`.

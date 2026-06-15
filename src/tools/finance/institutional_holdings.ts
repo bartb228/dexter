@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_1H } from './utils.js';
-import { isEdgarBackend, edgarUnsupported } from './edgar/index.js';
+import { isEdgarBackend, edgarUnsupported, edgarInstitutionalHoldings, edgarInstitutionalInvestors } from './edgar/index.js';
+import { logger } from '../../utils/logger.js';
 
 const InstitutionalHoldingsInputSchema = z
   .object({
@@ -72,7 +73,36 @@ export const getInstitutionalHoldings = new DynamicStructuredTool({
 Period filters (report_period / report_period_gte|lte|gt|lt) accept YYYY-MM-DD. Without any period filter, returns the latest reported quarter. Each position includes shares, value_usd, reported_price, accession_number, and a subsidiaries breakdown when voting authority is split across managers.`,
   schema: InstitutionalHoldingsInputSchema,
   func: async (input) => {
-    if (isEdgarBackend()) return edgarUnsupported('Institutional (13F) holdings');
+    // Free SEC Form 13F (FILER direction). The "who holds <ticker>" direction has no
+    // free reverse index → degrade. Manager-by-name/CIK → real holdings from 13F-HR.
+    if (isEdgarBackend()) {
+      if (input.ticker) {
+        return edgarUnsupported(
+          '"Who holds <ticker>" (13F by security)',
+          'SEC has no free security→filers index — query by manager name or CIK instead (e.g. filer_name: "BERKSHIRE").',
+        );
+      }
+      try {
+        const res = await edgarInstitutionalHoldings({
+          filerCik: input.filer_cik,
+          filerName: input.filer_name,
+          limit: Math.min(input.limit, 200),
+          report_period: input.report_period,
+          gte: input.report_period_gte,
+          lte: input.report_period_lte,
+          gt: input.report_period_gt,
+          lt: input.report_period_lt,
+        });
+        if (res) {
+          return formatToolResult(res, [`https://data.sec.gov (EDGAR 13F-HR: ${res.filer ?? res.cik})`]);
+        }
+        logger.info(`[EDGAR] no 13F holdings for ${input.filer_name ?? input.filer_cik}; falling back to FD`);
+        return edgarUnsupported('Institutional (13F) holdings', 'No 13F-HR found for that filer.');
+      } catch (e) {
+        logger.warn(`[EDGAR] 13F holdings failed: ${e instanceof Error ? e.message : String(e)}`);
+        return edgarUnsupported('Institutional (13F) holdings', 'Failed to fetch the 13F filing.');
+      }
+    }
     let filerCik = input.filer_cik ? input.filer_cik.padStart(10, '0') : undefined;
 
     if (!filerCik && input.filer_name) {
@@ -116,7 +146,15 @@ export const getInstitutionalInvestors = new DynamicStructuredTool({
   description: `Look up institutional 13F filers by name prefix and get their CIK. Returns a list of {cik, name} pairs. Use this to resolve a manager name (e.g. 'Berkshire Hathaway') into the filer_cik value to pass to get_institutional_holdings.`,
   schema: InstitutionalInvestorsInputSchema,
   func: async (input) => {
-    if (isEdgarBackend()) return edgarUnsupported('Institutional (13F) investors');
+    if (isEdgarBackend()) {
+      try {
+        const res = await edgarInstitutionalInvestors(input.name ?? '');
+        return formatToolResult(res, ['https://www.sec.gov/cgi-bin/browse-edgar (EDGAR company search)']);
+      } catch (e) {
+        logger.warn(`[EDGAR] investor search failed: ${e instanceof Error ? e.message : String(e)}`);
+        return edgarUnsupported('Institutional (13F) investor search');
+      }
+    }
     const params: Record<string, string | undefined> = {
       name: input.name,
     };
