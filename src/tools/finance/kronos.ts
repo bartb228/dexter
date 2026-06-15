@@ -37,8 +37,9 @@ function runKronos(args: string[]): Promise<ProcResult> {
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), KRONOS_TIMEOUT_MS);
-    child.stdout.on('data', (d) => { if (stdout.length < MAX_BUF) stdout += d.toString(); });
-    child.stderr.on('data', (d) => { if (stderr.length < MAX_BUF) stderr += d.toString(); });
+    // Keep the TAIL — the JSON object is the last line, so cap from the front.
+    child.stdout.on('data', (d) => { stdout += d.toString(); if (stdout.length > MAX_BUF) stdout = stdout.slice(-MAX_BUF); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > MAX_BUF) stderr = stderr.slice(-MAX_BUF); });
     child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, stdout, stderr: String(e), code: null }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, stdout, stderr, code }); });
   });
