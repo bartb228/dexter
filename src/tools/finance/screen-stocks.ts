@@ -5,6 +5,7 @@ import { callLlm } from '../../model/llm.js';
 import { formatToolResult } from '../types.js';
 import { getCurrentDate } from '../../agent/prompts.js';
 import { api } from './api.js';
+import { isEdgarBackend } from './edgar/index.js';
 
 /**
  * Rich description for the screen_stocks tool.
@@ -119,6 +120,27 @@ export function createScreenStocks(model: string): DynamicStructuredTool {
     schema: ScreenStocksInputSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;
+
+      // Market-wide screening is not feasible on the free SEC EDGAR backend: SEC has no
+      // screener endpoint, and screening the whole market client-side from raw companyfacts
+      // can't be done at interactive latency. Degrade honestly rather than (a) hit FD (401
+      // without a key) or (b) silently screen a tiny universe and mislead the user.
+      if (isEdgarBackend()) {
+        return formatToolResult(
+          {
+            supported: false,
+            backend: 'edgar',
+            query: input.query,
+            message:
+              'Market-wide stock screening is not available on the free SEC EDGAR backend ' +
+              '(SEC provides no screener endpoint, and screening the full market client-side ' +
+              'from raw filings is not feasible at interactive speed). For free analysis, use ' +
+              'get_financials, get_key_ratios, or get_insider_trades on specific tickers. To ' +
+              'enable full screening, set FINANCIAL_DATASETS_API_KEY and remove DATA_BACKEND=edgar.',
+          },
+          [],
+        );
+      }
 
       // Step 1: Fetch screener metrics (cached after first call)
       onProgress?.('Loading screener metrics...');
