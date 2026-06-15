@@ -3,6 +3,7 @@
  * `DATA_BACKEND=edgar`; otherwise the paid Financial Datasets path is used.
  */
 import { getCik, getCompanyFacts, companyFactsCacheAgeHours, FACTS_TTL_HOURS } from './client.js';
+import { formatToolResult } from '../../types.js';
 import {
   buildIncomeStatements,
   buildBalanceSheets,
@@ -15,6 +16,22 @@ import {
 /** True when the free SEC EDGAR backend is selected. FD remains the default. */
 export function isEdgarBackend(): boolean {
   return (process.env.DATA_BACKEND || '').toLowerCase() === 'edgar';
+}
+
+/** Honest degradation for a capability the free SEC backend can't serve — returns a
+ *  clear, actionable result instead of a confusing Financial Datasets 401. */
+export function edgarUnsupported(feature: string, hint = ''): string {
+  return formatToolResult(
+    {
+      supported: false,
+      backend: 'edgar',
+      message:
+        `${feature} is not available on the free SEC EDGAR backend.` +
+        (hint ? ` ${hint}` : '') +
+        ` To enable it, set FINANCIAL_DATASETS_API_KEY and remove DATA_BACKEND=edgar.`,
+    },
+    [],
+  );
 }
 
 // ── freshness stamping ──────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { api } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_1H } from './utils.js';
+import { isEdgarBackend, edgarUnsupported } from './edgar/index.js';
 
 const InstitutionalHoldingsInputSchema = z
   .object({
@@ -71,6 +72,7 @@ export const getInstitutionalHoldings = new DynamicStructuredTool({
 Period filters (report_period / report_period_gte|lte|gt|lt) accept YYYY-MM-DD. Without any period filter, returns the latest reported quarter. Each position includes shares, value_usd, reported_price, accession_number, and a subsidiaries breakdown when voting authority is split across managers.`,
   schema: InstitutionalHoldingsInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Institutional (13F) holdings');
     let filerCik = input.filer_cik ? input.filer_cik.padStart(10, '0') : undefined;
 
     if (!filerCik && input.filer_name) {
@@ -114,6 +116,7 @@ export const getInstitutionalInvestors = new DynamicStructuredTool({
   description: `Look up institutional 13F filers by name prefix and get their CIK. Returns a list of {cik, name} pairs. Use this to resolve a manager name (e.g. 'Berkshire Hathaway') into the filer_cik value to pass to get_institutional_holdings.`,
   schema: InstitutionalInvestorsInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Institutional (13F) investors');
     const params: Record<string, string | undefined> = {
       name: input.name,
     };

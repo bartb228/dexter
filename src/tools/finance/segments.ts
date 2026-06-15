@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { api, stripFieldsDeep } from './api.js';
 import { formatToolResult } from '../types.js';
 import { TTL_24H } from './utils.js';
+import { isEdgarBackend, edgarUnsupported } from './edgar/index.js';
 
 const REDUNDANT_FINANCIAL_FIELDS = ['accession_number', 'currency', 'period'] as const;
 
@@ -25,6 +26,7 @@ export const getFinancialSegments = new DynamicStructuredTool({
   description: `Provides a detailed breakdown of a company's financials by operating segments, such as products, services, or geographic regions. Useful for analyzing the composition of a company's revenue and other segment-level metrics.`,
   schema: FinancialSegmentsInputSchema,
   func: async (input) => {
+    if (isEdgarBackend()) return edgarUnsupported('Revenue/segment breakdowns');
     const params = {
       ticker: input.ticker,
       period: input.period,
