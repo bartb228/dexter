@@ -15,8 +15,13 @@ import { logger } from '@/utils';
 import { classifyError, isNonRetryableError } from '@/utils/errors';
 import { resolveProvider, getProviderById } from '@/providers';
 
-export const DEFAULT_PROVIDER = 'openai';
-export const DEFAULT_MODEL = 'gpt-5.5';
+export const DEFAULT_PROVIDER = 'nvidia';
+// NVIDIA's free build platform. Default: Nemotron Super 49B (v1.5) — a reasoning-tuned
+// model with full tool-calling + structured-output support (verified in the 2026-06-14
+// sweep). It trades latency (~3s chat / ~16s deep answers) for chain-of-thought depth.
+// Faster alternatives via /model: mistral-large-3-675b (~1s), gpt-oss-20b (fast). The
+// larger Nemotron Super 120B is available too but is much slower (~21s+).
+export const DEFAULT_MODEL = 'nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5';
 
 /**
  * Gets the fast model variant for the given provider.
@@ -94,6 +99,15 @@ const MODEL_FACTORIES: Record<string, ModelFactory> = {
       apiKey: getApiKey('OPENROUTER_API_KEY'),
       configuration: {
         baseURL: 'https://openrouter.ai/api/v1',
+      },
+    }),
+  nvidia: (name, opts) =>
+    new ChatOpenAI({
+      model: name.replace(/^nvidia:/, ''),
+      ...opts,
+      apiKey: getApiKey('NVIDIA_API_KEY'),
+      configuration: {
+        baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
       },
     }),
   moonshot: (name, opts) =>

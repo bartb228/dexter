@@ -1,9 +1,10 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
 import { createGetFinancials, createGetMarketData, createReadFilings, createScreenStocks } from './finance/index.js';
-import { exaSearch, perplexitySearch, tavilySearch, langSearch, WEB_SEARCH_DESCRIPTION, xSearchTool, X_SEARCH_DESCRIPTION } from './search/index.js';
+import { exaSearch, perplexitySearch, tavilySearch, langSearch, braveSearch, WEB_SEARCH_DESCRIPTION, xSearchTool, X_SEARCH_DESCRIPTION } from './search/index.js';
 import { createWebSearchTool, type WebSearchProvider } from './search/web-search.js';
 import { getSetting } from '../utils/config.js';
 import type { SearchProviderId } from '../utils/env.js';
+import { checkApiKeyExists } from '../utils/env.js';
 import { skillTool, SKILL_TOOL_DESCRIPTION } from './skill.js';
 import { createWebFetch, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
 import { browserTool, BROWSER_DESCRIPTION } from './browser/browser.js';
@@ -14,6 +15,9 @@ import { GET_FINANCIALS_DESCRIPTION } from './finance/get-financials.js';
 import { GET_MARKET_DATA_DESCRIPTION } from './finance/get-market-data.js';
 import { READ_FILINGS_DESCRIPTION } from './finance/read-filings.js';
 import { SCREEN_STOCKS_DESCRIPTION } from './finance/screen-stocks.js';
+import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh.js';
+import { isEdgarBackend } from './finance/edgar/index.js';
+import { kronosPredict, kronosAvailable, KRONOS_PREDICT_DESCRIPTION } from './finance/kronos.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
 import { memoryGetTool, MEMORY_GET_DESCRIPTION, memorySearchTool, MEMORY_SEARCH_DESCRIPTION, memoryUpdateTool, MEMORY_UPDATE_DESCRIPTION } from './memory/index.js';
@@ -154,18 +158,24 @@ export function getToolRegistry(model: string): RegisteredTool[] {
 
   // Build web_search as a fallback chain over whichever providers have keys configured.
   // The user's preferred provider (set via /search) is tried first; the others act as fallbacks.
+  // Register only providers with a REAL key — checkApiKeyExists ignores env.example
+  // 'your-...' placeholders, so a placeholder key no longer makes web_search waste
+  // calls 401-ing through a dead provider before reaching a configured one.
   const allWebSearchProviders: WebSearchProvider[] = [];
-  if (process.env.EXASEARCH_API_KEY) {
+  if (checkApiKeyExists('EXASEARCH_API_KEY')) {
     allWebSearchProviders.push({ id: 'exa', name: 'Exa', tool: exaSearch });
   }
-  if (process.env.PERPLEXITY_API_KEY) {
+  if (checkApiKeyExists('PERPLEXITY_API_KEY')) {
     allWebSearchProviders.push({ id: 'perplexity', name: 'Perplexity', tool: perplexitySearch });
   }
-  if (process.env.TAVILY_API_KEY) {
+  if (checkApiKeyExists('TAVILY_API_KEY')) {
     allWebSearchProviders.push({ id: 'tavily', name: 'Tavily', tool: tavilySearch });
   }
-  if (process.env.LANGSEARCH_API_KEY) {
+  if (checkApiKeyExists('LANGSEARCH_API_KEY')) {
     allWebSearchProviders.push({ id: 'langsearch', name: 'LangSearch', tool: langSearch });
+  }
+  if (checkApiKeyExists('BRAVE_SEARCH_API_KEY')) {
+    allWebSearchProviders.push({ id: 'brave', name: 'Brave', tool: braveSearch });
   }
 
   if (allWebSearchProviders.length > 0) {
@@ -186,7 +196,29 @@ export function getToolRegistry(model: string): RegisteredTool[] {
     });
   }
 
-  if (process.env.X_BEARER_TOKEN) {
+  // Kronos price-forecasting (only when the local Kronos project is present).
+  if (kronosAvailable()) {
+    tools.push({
+      name: 'kronos_predict',
+      tool: kronosPredict,
+      description: KRONOS_PREDICT_DESCRIPTION,
+      compactDescription: 'Forecast an asset\'s near-term price path (OHLCV + direction) with the local Kronos model.',
+      concurrencySafe: false,
+    });
+  }
+
+  // EDGAR-only: lets the agent clear stale cached SEC data on demand.
+  if (isEdgarBackend()) {
+    tools.push({
+      name: 'edgar_refresh',
+      tool: edgarRefresh,
+      description: EDGAR_REFRESH_DESCRIPTION,
+      compactDescription: 'Clear the cached SEC EDGAR data so the next finance request fetches fresh data.',
+      concurrencySafe: false,
+    });
+  }
+
+  if (checkApiKeyExists('X_BEARER_TOKEN')) {
     tools.push({
       name: 'x_search',
       tool: xSearchTool,

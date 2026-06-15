@@ -1,0 +1,240 @@
+/**
+ * Free SEC EDGAR data client (TypeScript port of the ai-hedge-fund Python backend).
+ *
+ * Replaces the paid Financial Datasets API for US-equity fundamentals. SEC's
+ * `data.sec.gov` XBRL companyfacts API is plain JSON, so this stays a self-contained
+ * TS module — no Python runtime. Dexter routes to it when `DATA_BACKEND=edgar`.
+ *
+ * SEC rules honored: a descriptive `EDGAR_USER_AGENT` is MANDATORY (SEC blocks
+ * traffic without one), and requests are paced to ≤10 req/s. Responses are cached
+ * to `.dexter/cache/edgar/` (companyfacts is large; ticker→CIK map is small).
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { dexterPath } from '../../../utils/paths.js';
+import { logger } from '../../../utils/logger.js';
+
+const SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
+const SEC_FACTS_URL = (cik: string) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
+const CACHE_DIR = dexterPath('cache/edgar');
+const TICKERS_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+const FACTS_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+const MIN_REQUEST_SPACING_MS = 110; // ≤10 req/s with margin
+
+export class EdgarError extends Error {}
+
+/** SEC requires a descriptive User-Agent (e.g. "QuantStack you@example.com"). */
+function userAgent(): string {
+  const ua = process.env.EDGAR_USER_AGENT;
+  if (!ua || !ua.trim()) {
+    throw new EdgarError(
+      'EDGAR_USER_AGENT is not set. SEC requires a descriptive User-Agent ' +
+        '(e.g. EDGAR_USER_AGENT="YourApp your@email.com"). Set it to use DATA_BACKEND=edgar.',
+    );
+  }
+  return ua.trim();
+}
+
+// ── process-wide rate limiter (≤10 req/s) ──────────────────────────────────────
+let lastRequestAt = 0;
+async function paced<T>(fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const wait = MIN_REQUEST_SPACING_MS - (now - lastRequestAt);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastRequestAt = Date.now();
+  return fn();
+}
+
+function ensureCacheDir(): void {
+  if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+function readCache<T>(file: string, ttlMs: number): T | null {
+  try {
+    if (!existsSync(file)) return null;
+    if (Date.now() - statSync(file).mtimeMs > ttlMs) return null;
+    return JSON.parse(readFileSync(file, 'utf-8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeCacheSafe(file: string, data: unknown): void {
+  try {
+    ensureCacheDir();
+    writeFileSync(file, JSON.stringify(data));
+  } catch (e) {
+    logger.warn(`[EDGAR] cache write failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await paced(() => fetch(url, { headers: { 'User-Agent': userAgent(), Accept: 'application/json' } }));
+  if (!res.ok) throw new EdgarError(`SEC request failed ${res.status} for ${url}`);
+  return res.json() as Promise<T>;
+}
+
+/** Paced raw-text GET (for Form 4 ownership XML and other filing documents). */
+export async function fetchText(url: string): Promise<string> {
+  const res = await paced(() => fetch(url, { headers: { 'User-Agent': userAgent() } }));
+  if (!res.ok) throw new EdgarError(`SEC request failed ${res.status} for ${url}`);
+  return res.text();
+}
+
+// ── submissions feed (filings list: forms, accession numbers, dates) ────────────
+export interface Submissions {
+  cik?: string;
+  filings?: {
+    recent?: {
+      form?: string[];
+      accessionNumber?: string[];
+      primaryDocument?: string[];
+      filingDate?: string[];
+    };
+  };
+}
+
+export async function getSubmissions(cik: string): Promise<Submissions> {
+  return fetchJson<Submissions>(`https://data.sec.gov/submissions/CIK${cik}.json`);
+}
+
+// ── ticker → CIK ────────────────────────────────────────────────────────────────
+interface TickerEntry { cik_str: number; ticker: string; title: string }
+let tickerMapCache: Map<string, string> | null = null;
+let tickerMapLoadedAt = 0; // when the in-memory map was built (for TTL expiry in a long-running process)
+let lastForcedRefreshAt = 0; // rate-limit force-refetches triggered by cache misses
+// On an unknown ticker (e.g. a same-week IPO not yet in the cached map), re-fetch the
+// live map at most this often so a brand-new symbol resolves without a stale-cache delay.
+const FORCED_REFRESH_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+async function loadTickerMap(force = false): Promise<Map<string, string>> {
+  // In-memory cache respects the disk TTL so a long-lived process picks up SEC's ~daily
+  // ticker-map refresh instead of pinning the first load for its whole lifetime.
+  const inMemoryFresh = tickerMapCache && Date.now() - tickerMapLoadedAt < TICKERS_TTL_MS;
+  if (tickerMapCache && inMemoryFresh && !force) return tickerMapCache;
+
+  const file = `${CACHE_DIR}/company_tickers.json`;
+  let raw = force ? null : readCache<Record<string, TickerEntry>>(file, TICKERS_TTL_MS);
+  if (!raw) {
+    raw = await fetchJson<Record<string, TickerEntry>>(SEC_TICKERS_URL);
+    writeCacheSafe(file, raw);
+  }
+  const map = new Map<string, string>();
+  for (const entry of Object.values(raw)) {
+    if (entry?.ticker && typeof entry.cik_str === 'number') {
+      map.set(entry.ticker.toUpperCase(), String(entry.cik_str).padStart(10, '0'));
+    }
+  }
+  tickerMapCache = map;
+  tickerMapLoadedAt = Date.now();
+  return map;
+}
+
+function lookupCik(map: Map<string, string>, ticker: string): string | null {
+  const t = ticker.toUpperCase().trim();
+  return map.get(t) ?? map.get(t.replace(/\./g, '-')) ?? map.get(t.replace(/-/g, '.')) ?? null;
+}
+
+/**
+ * Resolve a ticker to its zero-padded 10-digit CIK. Handles dual-class share
+ * classes: SEC uses a DASH (BRK-B) while users often type a DOT (BRK.B), so we
+ * try the symbol as-is, then swap dot↔dash.
+ *
+ * Refresh-on-miss: if the ticker isn't in the (possibly day-old) cached map — the
+ * case for a same-week IPO like SPCX — force one live re-fetch (rate-limited) and
+ * retry, so brand-new symbols resolve without waiting for the 24h TTL. Returns null
+ * only if it's still unknown after a fresh map.
+ */
+export async function getCik(ticker: string): Promise<string | null> {
+  const hit = lookupCik(await loadTickerMap(), ticker);
+  if (hit) return hit;
+  if (Date.now() - lastForcedRefreshAt < FORCED_REFRESH_MIN_INTERVAL_MS) return null;
+  lastForcedRefreshAt = Date.now();
+  return lookupCik(await loadTickerMap(true), ticker);
+}
+
+/**
+ * Clear the on-disk EDGAR cache (ticker→CIK map + companyfacts) and reset the
+ * in-memory ticker map, so the next request re-fetches fresh data from SEC.
+ *
+ * SCOPED STRICTLY to CACHE_DIR: only deletes regular `*.json` files directly
+ * inside `.dexter/cache/edgar/` — never recurses, never touches anything else.
+ * Returns the names of the files removed. Live data (filings/insider/prices) is
+ * uncached and unaffected.
+ */
+export function clearEdgarCache(): { cleared: string[] } {
+  tickerMapCache = null;
+  tickerMapLoadedAt = 0;
+  const cleared: string[] = [];
+  try {
+    if (!existsSync(CACHE_DIR)) return { cleared };
+    for (const name of readdirSync(CACHE_DIR)) {
+      if (!name.endsWith('.json')) continue; // only our cache files
+      const path = join(CACHE_DIR, name);
+      try {
+        if (statSync(path).isFile()) {
+          unlinkSync(path);
+          cleared.push(name);
+        }
+      } catch (e) {
+        logger.warn(`[EDGAR] cache clear skipped ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  } catch (e) {
+    logger.warn(`[EDGAR] cache clear failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return { cleared };
+}
+
+// ── companyfacts ─────────────────────────────────────────────────────────────
+export interface ConceptFact {
+  end: string; // period-end YYYY-MM-DD
+  start?: string; // period-start (duration concepts only)
+  val: number;
+  fy?: number;
+  fp?: string; // FY, Q1..Q4
+  form?: string; // 10-K, 10-Q, ...
+  frame?: string;
+}
+export interface CompanyFacts {
+  cik: number;
+  entityName: string;
+  facts: { 'us-gaap'?: Record<string, { units: Record<string, ConceptFact[]> }>; [taxon: string]: unknown };
+}
+
+/** Hours since the companyfacts cache file for this CIK was written, or null if not
+ *  cached (i.e. it will be / was just fetched live). Used for freshness stamping. */
+export function companyFactsCacheAgeHours(cik: string): number | null {
+  const file = `${CACHE_DIR}/facts_${cik}.json`;
+  try {
+    if (!existsSync(file)) return null;
+    return (Date.now() - statSync(file).mtimeMs) / 3_600_000;
+  } catch {
+    return null;
+  }
+}
+
+/** companyfacts cache lifetime in hours (for freshness messaging). */
+export const FACTS_TTL_HOURS = FACTS_TTL_MS / 3_600_000;
+
+export async function getCompanyFacts(cik: string): Promise<CompanyFacts> {
+  const file = `${CACHE_DIR}/facts_${cik}.json`;
+  const cached = readCache<CompanyFacts>(file, FACTS_TTL_MS);
+  if (cached) return cached;
+  const data = await fetchJson<CompanyFacts>(SEC_FACTS_URL(cik));
+  writeCacheSafe(file, data);
+  return data;
+}
+
+/**
+ * All facts for a us-gaap concept under its USD (or USD/shares, or pure) unit.
+ * Returns [] when the concept or a numeric unit is absent.
+ */
+export function conceptFacts(facts: CompanyFacts, concept: string): ConceptFact[] {
+  const node = facts.facts?.['us-gaap']?.[concept];
+  if (!node?.units) return [];
+  // Prefer USD; fall back to USD/shares (EPS) or the first numeric unit (shares).
+  const units = node.units;
+  const key = units['USD'] ? 'USD' : units['USD/shares'] ? 'USD/shares' : Object.keys(units)[0];
+  return key ? (units[key] ?? []) : [];
+}

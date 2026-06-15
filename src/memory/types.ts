@@ -1,4 +1,4 @@
-export type EmbeddingProviderId = 'openai' | 'gemini' | 'ollama' | 'auto' | 'none';
+export type EmbeddingProviderId = 'openai' | 'gemini' | 'nvidia' | 'ollama' | 'auto' | 'none';
 
 export type ContentSource = 'memory' | 'sessions';
 
