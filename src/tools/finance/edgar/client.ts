@@ -84,12 +84,14 @@ export async function fetchText(url: string): Promise<string> {
 // ── submissions feed (filings list: forms, accession numbers, dates) ────────────
 export interface Submissions {
   cik?: string;
+  name?: string;
   filings?: {
     recent?: {
       form?: string[];
       accessionNumber?: string[];
       primaryDocument?: string[];
       filingDate?: string[];
+      reportDate?: string[]; // period of report (e.g. 13F quarter-end)
     };
   };
 }
