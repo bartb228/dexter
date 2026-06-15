@@ -23,6 +23,7 @@ export function edgarServesPeriod(period: string): boolean {
 }
 
 export { fetchInsiderTrades as edgarInsiderTrades } from './insider.js';
+export { edgarKeyRatiosSnapshot, edgarHistoricalKeyRatios } from './metrics.js';
 
 /**
  * Income statements from SEC companyfacts, shaped like FD's `income_statements`.
