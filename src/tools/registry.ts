@@ -4,6 +4,7 @@ import { exaSearch, perplexitySearch, tavilySearch, langSearch, braveSearch, WEB
 import { createWebSearchTool, type WebSearchProvider } from './search/web-search.js';
 import { getSetting } from '../utils/config.js';
 import type { SearchProviderId } from '../utils/env.js';
+import { checkApiKeyExists } from '../utils/env.js';
 import { skillTool, SKILL_TOOL_DESCRIPTION } from './skill.js';
 import { createWebFetch, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
 import { browserTool, BROWSER_DESCRIPTION } from './browser/browser.js';
@@ -154,20 +155,23 @@ export function getToolRegistry(model: string): RegisteredTool[] {
 
   // Build web_search as a fallback chain over whichever providers have keys configured.
   // The user's preferred provider (set via /search) is tried first; the others act as fallbacks.
+  // Register only providers with a REAL key — checkApiKeyExists ignores env.example
+  // 'your-...' placeholders, so a placeholder key no longer makes web_search waste
+  // calls 401-ing through a dead provider before reaching a configured one.
   const allWebSearchProviders: WebSearchProvider[] = [];
-  if (process.env.EXASEARCH_API_KEY) {
+  if (checkApiKeyExists('EXASEARCH_API_KEY')) {
     allWebSearchProviders.push({ id: 'exa', name: 'Exa', tool: exaSearch });
   }
-  if (process.env.PERPLEXITY_API_KEY) {
+  if (checkApiKeyExists('PERPLEXITY_API_KEY')) {
     allWebSearchProviders.push({ id: 'perplexity', name: 'Perplexity', tool: perplexitySearch });
   }
-  if (process.env.TAVILY_API_KEY) {
+  if (checkApiKeyExists('TAVILY_API_KEY')) {
     allWebSearchProviders.push({ id: 'tavily', name: 'Tavily', tool: tavilySearch });
   }
-  if (process.env.LANGSEARCH_API_KEY) {
+  if (checkApiKeyExists('LANGSEARCH_API_KEY')) {
     allWebSearchProviders.push({ id: 'langsearch', name: 'LangSearch', tool: langSearch });
   }
-  if (process.env.BRAVE_SEARCH_API_KEY) {
+  if (checkApiKeyExists('BRAVE_SEARCH_API_KEY')) {
     allWebSearchProviders.push({ id: 'brave', name: 'Brave', tool: braveSearch });
   }
 
@@ -189,7 +193,7 @@ export function getToolRegistry(model: string): RegisteredTool[] {
     });
   }
 
-  if (process.env.X_BEARER_TOKEN) {
+  if (checkApiKeyExists('X_BEARER_TOKEN')) {
     tools.push({
       name: 'x_search',
       tool: xSearchTool,
