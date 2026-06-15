@@ -73,6 +73,30 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Paced raw-text GET (for Form 4 ownership XML and other filing documents). */
+export async function fetchText(url: string): Promise<string> {
+  const res = await paced(() => fetch(url, { headers: { 'User-Agent': userAgent() } }));
+  if (!res.ok) throw new EdgarError(`SEC request failed ${res.status} for ${url}`);
+  return res.text();
+}
+
+// ── submissions feed (filings list: forms, accession numbers, dates) ────────────
+export interface Submissions {
+  cik?: string;
+  filings?: {
+    recent?: {
+      form?: string[];
+      accessionNumber?: string[];
+      primaryDocument?: string[];
+      filingDate?: string[];
+    };
+  };
+}
+
+export async function getSubmissions(cik: string): Promise<Submissions> {
+  return fetchJson<Submissions>(`https://data.sec.gov/submissions/CIK${cik}.json`);
+}
+
 // ── ticker → CIK ────────────────────────────────────────────────────────────────
 interface TickerEntry { cik_str: number; ticker: string; title: string }
 let tickerMapCache: Map<string, string> | null = null;

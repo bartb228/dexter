@@ -22,6 +22,8 @@ export function edgarServesPeriod(period: string): boolean {
   return period === 'annual' || period === 'quarterly';
 }
 
+export { fetchInsiderTrades as edgarInsiderTrades } from './insider.js';
+
 /**
  * Income statements from SEC companyfacts, shaped like FD's `income_statements`.
  * Returns [] for an unknown ticker. Throws EdgarError if EDGAR_USER_AGENT is unset
