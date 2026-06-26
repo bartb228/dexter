@@ -19,6 +19,7 @@ import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh
 import { isEdgarBackend } from './finance/edgar/index.js';
 import { kronosPredict, kronosAvailable, KRONOS_PREDICT_DESCRIPTION } from './finance/kronos.js';
 import { quantSignals, quantSignalsAvailable, QUANT_SIGNALS_DESCRIPTION } from './finance/quant-signals.js';
+import { getOptionsChain, optionsAvailable, OPTIONS_CHAIN_DESCRIPTION } from './finance/options.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
 import { memoryGetTool, MEMORY_GET_DESCRIPTION, memorySearchTool, MEMORY_SEARCH_DESCRIPTION, memoryUpdateTool, MEMORY_UPDATE_DESCRIPTION } from './memory/index.js';
@@ -205,6 +206,17 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: QUANT_SIGNALS_DESCRIPTION,
       compactDescription: 'Deterministic quant scorecard (Mohanram G-Score, Beneish M-Score, quality factors) from SEC fundamentals.',
       concurrencySafe: false,
+    });
+  }
+
+  // Options chain + IV/greeks (only when an options-entitled Polygon/Massive key is set).
+  if (optionsAvailable()) {
+    tools.push({
+      name: 'get_options_chain',
+      tool: getOptionsChain,
+      description: OPTIONS_CHAIN_DESCRIPTION,
+      compactDescription: 'Equity options chain with implied volatility (IV) + greeks, open interest, and an ATM IV term structure.',
+      concurrencySafe: true,
     });
   }
 
