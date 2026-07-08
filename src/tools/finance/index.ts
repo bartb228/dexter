@@ -12,4 +12,6 @@ export { createGetFinancials } from './get-financials.js';
 export { createGetMarketData } from './get-market-data.js';
 export { createReadFilings } from './read-filings.js';
 export { createScreenStocks } from './screen-stocks.js';
+export { runQualityScreen, qualityScreenAvailable, RUN_QUALITY_SCREEN_DESCRIPTION } from './quality-screen.js';
+export { assessMoat, assessMoatAvailable, ASSESS_MOAT_DESCRIPTION } from './assess-moat.js';
 

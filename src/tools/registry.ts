@@ -19,6 +19,8 @@ import { edgarRefresh, EDGAR_REFRESH_DESCRIPTION } from './finance/edgar-refresh
 import { isEdgarBackend } from './finance/edgar/index.js';
 import { kronosPredict, kronosAvailable, KRONOS_PREDICT_DESCRIPTION } from './finance/kronos.js';
 import { quantSignals, quantSignalsAvailable, QUANT_SIGNALS_DESCRIPTION } from './finance/quant-signals.js';
+import { runQualityScreen, qualityScreenAvailable, RUN_QUALITY_SCREEN_DESCRIPTION } from './finance/quality-screen.js';
+import { assessMoat, assessMoatAvailable, ASSESS_MOAT_DESCRIPTION } from './finance/assess-moat.js';
 import { getOptionsChain, optionsAvailable, OPTIONS_CHAIN_DESCRIPTION } from './finance/options.js';
 import { heartbeatTool, HEARTBEAT_TOOL_DESCRIPTION } from './heartbeat/heartbeat-tool.js';
 import { cronTool, CRON_TOOL_DESCRIPTION } from './cron/cron-tool.js';
@@ -227,6 +229,28 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       tool: kronosPredict,
       description: KRONOS_PREDICT_DESCRIPTION,
       compactDescription: 'Forecast an asset\'s near-term price path (OHLCV + direction) with the local Kronos model.',
+      concurrencySafe: false,
+    });
+  }
+
+  // Quality-moat stock screen (only when the local Stock-scanner project is present).
+  if (qualityScreenAvailable()) {
+    tools.push({
+      name: 'run_quality_screen',
+      tool: runQualityScreen,
+      description: RUN_QUALITY_SCREEN_DESCRIPTION,
+      compactDescription: 'Run the deterministic quality-moat stock screen (ROE/ROIC≥15%, D/E<0.5, PEG<1.5, etc.) and return the ranked shortlist that passed.',
+      concurrencySafe: false,
+    });
+  }
+
+  // Economic-moat verdict (Buffett/Munger frameworks; only when ai-hedge-fund is present).
+  if (assessMoatAvailable()) {
+    tools.push({
+      name: 'assess_moat',
+      tool: assessMoat,
+      description: ASSESS_MOAT_DESCRIPTION,
+      compactDescription: 'Assess a company\'s economic moat (Buffett/Munger: ROIC durability, pricing power, capital intensity) → wide/narrow/none verdict.',
       concurrencySafe: false,
     });
   }
