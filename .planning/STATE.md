@@ -10,10 +10,20 @@
   Workflow review panel + finish-judge PASS; 4 review-driven fixes (soft-fail scanner write,
   r.ok warn, normalizeFailureSummary clamp/filter, readonly type). See `01-02-SUMMARY.md`.
 
-The live misdiagnosis is now closed end-to-end: a 0-passers screen returns a real gate
-tally (incl. KO Debt/Eq) instead of "backend limitations".
-Next: execute `02-01` (universe selection) — also picks up the deferred `buildScanArgs`
-refactor + arg-order test flagged during 01-02 review.
+- **02-01 SHIPPED**: curated static `quality_growth()` universe in the scanner + a validated
+  `universe` enum arg on run_quality_screen (injection guard); `buildScanArgs`/`describeScreened`
+  pure helpers; 17 TS tests + typecheck 0; scanner suite 962; Workflow panel + finish-judge PASS.
+  Picked up the deferred 01-02 arg-order guard. See `phases/02-universe-selection/02-01-SUMMARY.md`.
+
+## ✅ PROJECT COMPLETE (2026-07-14)
+Whole Definition of Done met: run_quality_screen returns a failure_summary on rejections
+(Phase 01) AND accepts a validated `universe` incl. quality_growth (Phase 02). Live smoke:
+universe:quality_growth → passed 4 (DECK/MNST/RMD/LRCX) + failure_summary explaining 35 misses.
+The original misdiagnosis ("0 passers → backend limitations" + hallucinated KO Debt/Eq) is
+structurally impossible now.
+
+Out-of-scope follow-up (flagged, not fixed): scanner single-profile path may ignore `--top`
+truncation ("Ignored for single-profile mode") → run_quality_screen `top` possibly inert.
 
 ## Accumulated decisions (constrain execution)
 - **D1 — separate rejections file.** Emit rejections via a NEW `--rejections-json <path>`,

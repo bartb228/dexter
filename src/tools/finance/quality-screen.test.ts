@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { normalizeFailureSummary } from './quality-screen.js';
+import { normalizeFailureSummary, buildScanArgs, describeScreened } from './quality-screen.js';
 
 // Plan 01-02 Task 2: unit-test the pure summary-normalizer (no scanner spawn). Its job is
 // to turn whatever the scanner's --rejections-json file contained into a clean
@@ -104,5 +104,82 @@ describe('normalizeFailureSummary', () => {
       ],
     });
     expect(out?.samples).toEqual([{ symbol: 'KO', failures: ['ROIC=x'] }]);
+  });
+});
+
+// Plan 02-01 Task 3: the arg wiring (symbols-vs-universe precedence + flag ordering) is
+// the one regression class the normalizeFailureSummary tests can't catch — test it directly.
+describe('buildScanArgs', () => {
+  const base = { profile: 'quality_moat', outPath: '/tmp/out.json', rejPath: '/tmp/rej.json', top: 25 };
+
+  test('symbols present → --symbols with the tickers, and NO --universe', () => {
+    const args = buildScanArgs({ ...base, symbols: ['KO', 'MSFT'], universe: 'quality_growth' });
+    const si = args.indexOf('--symbols');
+    expect(si).toBeGreaterThanOrEqual(0);
+    expect(args.slice(si)).toEqual(['--symbols', 'KO', 'MSFT']);
+    expect(args).not.toContain('--universe');
+  });
+
+  test('universe=quality_growth, no symbols → --universe quality_growth (+ --json/--rejections-json)', () => {
+    const args = buildScanArgs({ ...base, symbols: [], universe: 'quality_growth' });
+    const i = args.indexOf('--universe');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('quality_growth');
+    expect(args).not.toContain('--symbols');
+    expect(args).toContain('--json');
+    expect(args).toContain('--rejections-json');
+  });
+
+  test('universe=default, no symbols → NO --universe flag, but --json/--rejections-json still present', () => {
+    const args = buildScanArgs({ ...base, symbols: [], universe: 'default' });
+    expect(args).not.toContain('--universe');
+    expect(args).not.toContain('--symbols');
+    // The "always emits --json + --rejections-json" invariant matters most on this plain path.
+    expect(args).toContain('--json');
+    expect(args).toContain('--rejections-json');
+  });
+
+  test('universe omitted (undefined), no symbols → NO --universe (the true default call shape)', () => {
+    const args = buildScanArgs({ ...base, symbols: [], universe: undefined });
+    expect(args).not.toContain('--universe');
+    expect(args).not.toContain('--symbols');
+    expect(args).toContain('--json');
+    expect(args).toContain('--rejections-json');
+  });
+
+  test('both symbols AND universe given → symbols win, --universe absent', () => {
+    const args = buildScanArgs({ ...base, symbols: ['LRCX'], universe: 'sp500' });
+    expect(args).toContain('--symbols');
+    expect(args).not.toContain('--universe');
+  });
+
+  test('always emits --json/--rejections-json; --rejections-json precedes the trailing --symbols', () => {
+    const args = buildScanArgs({ ...base, symbols: ['KO'], universe: undefined });
+    expect(args[args.indexOf('--profile') + 1]).toBe('quality_moat');
+    expect(args[args.indexOf('--top') + 1]).toBe('25');
+    expect(args[args.indexOf('--json') + 1]).toBe('/tmp/out.json');
+    expect(args[args.indexOf('--rejections-json') + 1]).toBe('/tmp/rej.json');
+    const si = args.indexOf('--symbols');
+    // Phase-01 order guard (deferred from 01-02): flag must precede the variadic --symbols.
+    expect(args.indexOf('--rejections-json')).toBeLessThan(si);
+    // --symbols + tickers are the trailing segment → argparse nargs='+' can't eat a later flag.
+    expect(args.slice(si)).toEqual(['--symbols', 'KO']);
+  });
+});
+
+// Review-driven: the result's `screened` label is the only signal of what was actually
+// screened — unit-test its branches so a future edit can't silently mislabel a scan.
+describe('describeScreened', () => {
+  test('symbols present → the symbols array (verbatim)', () => {
+    expect(describeScreened(['KO', 'MSFT'], 'quality_growth')).toEqual(['KO', 'MSFT']);
+  });
+  test('no symbols, universe=quality_growth → "quality_growth universe"', () => {
+    expect(describeScreened([], 'quality_growth')).toBe('quality_growth universe');
+  });
+  test('no symbols, universe=default → "default large-cap universe"', () => {
+    expect(describeScreened([], 'default')).toBe('default large-cap universe');
+  });
+  test('no symbols, universe omitted → "default large-cap universe"', () => {
+    expect(describeScreened([], undefined)).toBe('default large-cap universe');
   });
 });

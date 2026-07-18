@@ -126,6 +126,47 @@ export function normalizeFailureSummary(raw: unknown): FailureSummary | undefine
   };
 }
 
+/** Universes run_quality_screen can target when `symbols` is omitted. "default" means
+ * "send no --universe flag" → the scanner's config.UNIVERSE. The z.enum over these values
+ * is the injection guard: only one of these literals can ever reach the scanner's argv. */
+const UNIVERSES = ['default', 'sp500', 'russell_1000', 'russell_3000', 'dow_30', 'quality_growth'] as const;
+type Universe = (typeof UNIVERSES)[number];
+
+/**
+ * Assemble the scanner CLI args. Pure + exported so the arg wiring — especially the
+ * --symbols precedence and flag ordering — is unit-testable without spawning Python.
+ * Invariants: ALWAYS emits --json + --rejections-json; --symbols (variadic, argparse
+ * nargs='+') is ALWAYS last so no flag is swallowed as a ticker; --universe is sent ONLY
+ * when there are no symbols and the universe is a non-"default" value. --symbols beats
+ * --universe — the two are never sent together (matches the scanner's resolve order).
+ */
+export function buildScanArgs(opts: {
+  profile: string;
+  outPath: string;
+  rejPath: string;
+  top: number;
+  symbols: string[];
+  universe?: Universe;
+}): string[] {
+  const { profile, outPath, rejPath, top, symbols, universe } = opts;
+  const args = ['--profile', profile, '--json', outPath, '--rejections-json', rejPath, '--top', String(top)];
+  if (symbols.length > 0) {
+    args.push('--symbols', ...symbols); // symbols win; keep --symbols LAST
+  } else if (universe && universe !== 'default') {
+    args.push('--universe', universe);
+  }
+  return args;
+}
+
+/** Label for the result's `screened` field: the ticker array when symbols were given,
+ * else the chosen universe (or the default large-cap universe). Pure + exported so the
+ * branches are unit-testable rather than buried in func(). */
+export function describeScreened(symbols: string[], universe?: Universe): string[] | string {
+  if (symbols.length > 0) return symbols;
+  if (universe && universe !== 'default') return `${universe} universe`;
+  return 'default large-cap universe';
+}
+
 export const RUN_QUALITY_SCREEN_DESCRIPTION = `
 Runs a DETERMINISTIC quality-compounder / economic-moat stock screen and returns the
 ranked shortlist that passes every gate. The gates are fixed in the Stock-scanner
@@ -145,8 +186,12 @@ engine (not re-decided per call):
   companion assess_moat tool; run this screen first, then assess_moat on the survivors.
 
 ## Notes
-- Pass \`symbols\` to screen specific tickers (fast). Omit to screen the scanner's
-  default large-cap universe (slower — can take minutes).
+- Pass \`symbols\` to screen specific tickers (fast). Omit to screen a \`universe\`.
+- \`universe\` (when \`symbols\` is omitted): \`quality_growth\` is a fast curated compounder
+  shortlist — the recommended way to actually find passers. \`default\` is the mature
+  large-cap list (rarely clears this strict screen). \`sp500\`/\`russell_1000\`/
+  \`russell_3000\`/\`dow_30\` scrape a LIVE index and are SLOW (minutes; may approach the
+  300s timeout). \`symbols\` always wins over \`universe\`.
 - Requires the local Stock-scanner project + its Finnhub/Polygon keys; without keys it
   degrades to slower Yahoo data. Returns a clear error (not a crash) if the scan fails.
 - Deterministic and auditable — the same inputs give the same shortlist.
@@ -160,8 +205,9 @@ engine (not re-decided per call):
   value: if a number is not present in \`picks\` or \`failure_summary\`, say it is not
   available — do not fill it in from memory (a real screen showed KO's Debt/Equity at
   ~1.41, not 0.00; the tool's own data is the source of truth).
-- To surface passers, screen a broader set of names (pass a wider \`symbols\` list) rather
-  than loosening the gates in your reasoning.
+- To surface passers, screen a broader/more-appropriate set of names — e.g.
+  \`universe: 'quality_growth'\` (a curated compounder shortlist), or a wider \`symbols\`
+  list — rather than loosening the gates in your reasoning.
 `.trim();
 
 const QualityScreenInputSchema = z.object({
@@ -177,6 +223,10 @@ const QualityScreenInputSchema = z.object({
     .boolean()
     .optional()
     .describe('Use the relaxed variant — loosens ONLY the liquidity gate (current ratio > 1.0 instead of > 1.5) to surface more cash-generative quality names; all other gates stay strict. Default false.'),
+  universe: z
+    .enum(UNIVERSES)
+    .optional()
+    .describe('Which universe to screen when `symbols` is omitted. "quality_growth" = a fast curated compounder shortlist (recommended for finding passers). "default" = the mature large-cap list (rarely clears this screen). "sp500"/"russell_1000"/"russell_3000"/"dow_30" scrape a LIVE index and are SLOW (minutes; may approach the timeout). Ignored when `symbols` is provided.'),
 });
 
 export const runQualityScreen = new DynamicStructuredTool({
@@ -201,10 +251,8 @@ export const runQualityScreen = new DynamicStructuredTool({
     const profile = input.relaxed ? 'quality_moat_relaxed' : 'quality_moat';
     const outPath = join(tmpdir(), `qm_scan_${process.pid}_${Date.now()}.json`);
     const rejPath = join(tmpdir(), `qm_rej_${process.pid}_${Date.now()}.json`);
-    // --rejections-json is placed BEFORE the variadic --symbols spread, which must stay
-    // last (argparse nargs='+' would otherwise swallow the flag as a ticker).
-    const args = ['--profile', profile, '--json', outPath, '--rejections-json', rejPath, '--top', String(input.top ?? 25)];
-    if (symbols.length) args.push('--symbols', ...symbols);
+    const universe = input.universe;
+    const args = buildScanArgs({ profile, outPath, rejPath, top: input.top ?? 25, symbols, universe });
 
     const r = await runScanner(args);
 
@@ -264,7 +312,7 @@ export const runQualityScreen = new DynamicStructuredTool({
     return formatToolResult(
       {
         profile,
-        screened: symbols.length ? symbols : 'default large-cap universe',
+        screened: describeScreened(symbols, universe),
         passed: picks.length,
         picks,
         // Present whenever the scan rejected any names — the reason set behind a short (or
