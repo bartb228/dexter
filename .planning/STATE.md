@@ -1,12 +1,19 @@
 # Project State
 
 ## Current position
-**01-01 SHIPPED & verified 2026-07-14** (via /task-loop): scanner emits per-gate
-rejection tally + samples via `--rejections-json`; 961 tests green; independent
-review panel + finish-judge PASS; 2 review-driven fixes (data-skip exclusion,
-tier-mode guard). See `phases/01-failure-observability/01-01-SUMMARY.md`.
-Next: execute `01-02` (Dexter tool reads the file + attaches failure_summary),
-then `02-01` (universe selection).
+**PHASE 01 COMPLETE & verified 2026-07-14** (via /task-loop):
+- **01-01 SHIPPED**: scanner emits per-gate rejection tally + samples via
+  `--rejections-json`; 961 tests green; panel + finish-judge PASS; 2 review-driven fixes
+  (data-skip exclusion, tier-mode guard). See `phases/01-failure-observability/01-01-SUMMARY.md`.
+- **01-02 SHIPPED**: `run_quality_screen` reads the file + attaches `failure_summary`;
+  description forbids "backend limitations" + metric hallucination; 7 TS tests + typecheck 0;
+  Workflow review panel + finish-judge PASS; 4 review-driven fixes (soft-fail scanner write,
+  r.ok warn, normalizeFailureSummary clamp/filter, readonly type). See `01-02-SUMMARY.md`.
+
+The live misdiagnosis is now closed end-to-end: a 0-passers screen returns a real gate
+tally (incl. KO Debt/Eq) instead of "backend limitations".
+Next: execute `02-01` (universe selection) — also picks up the deferred `buildScanArgs`
+refactor + arg-order test flagged during 01-02 review.
 
 ## Accumulated decisions (constrain execution)
 - **D1 — separate rejections file.** Emit rejections via a NEW `--rejections-json <path>`,

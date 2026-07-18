@@ -55,6 +55,77 @@ const SELECT = [
   'passing_profiles',
 ] as const;
 
+/**
+ * Per-gate rejection summary the scanner writes to `--rejections-json`. Attached to the
+ * tool result so a 0-passers screen is SELF-EXPLAINING (which gates blocked how many
+ * names, with sample reasons) rather than misread as a "backend limitation".
+ *
+ * Invariants (all counts are "how many names", so >= 0; samples capped at 8) are enforced
+ * by {@link normalizeFailureSummary}, which is the ONLY sanctioned constructor — build
+ * instances through it, never by hand, so the invariants hold. `readonly` guards against
+ * post-construction mutation.
+ */
+export interface FailureSummary {
+  readonly screened: number;
+  readonly passed: number;
+  readonly rejected: number;
+  /** canonical gate → count of screened names blocked by it (>= 0; already sorted by the scanner). */
+  readonly gate_tally: Readonly<Record<string, number>>;
+  /** capped sample of per-name reasons (the scanner caps at 8; re-capped here defensively). */
+  readonly samples: ReadonlyArray<Readonly<{ symbol: string; failures: readonly string[] }>>;
+}
+
+/**
+ * Defensively coerce the scanner's rejections JSON into a {@link FailureSummary}.
+ * Returns `undefined` for anything that is not a plain non-array object (missing file,
+ * `null`, string, number, array) so the tool attaches nothing rather than throwing or
+ * fabricating — preserving run_quality_screen's never-throw contract (Decision D6).
+ * Numeric fields coerce to finite numbers (default 0); non-number gate_tally values are
+ * dropped; samples are re-capped at 8.
+ */
+export function normalizeFailureSummary(raw: unknown): FailureSummary | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  // Counts are "how many names" — clamp to >= 0 so a garbled/adversarial file can never
+  // hand the model a negative (nonsensical) count.
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : 0);
+
+  const gate_tally: Record<string, number> = {};
+  const rawTally = obj.gate_tally;
+  if (rawTally !== null && typeof rawTally === 'object' && !Array.isArray(rawTally)) {
+    for (const [gate, count] of Object.entries(rawTally as Record<string, unknown>)) {
+      // Drop non-number and negative tallies — a "names blocked" count is never < 0.
+      if (typeof count === 'number' && Number.isFinite(count) && count >= 0) gate_tally[gate] = count;
+    }
+  }
+
+  const rawSamples = Array.isArray(obj.samples) ? obj.samples : [];
+  const samples = rawSamples
+    // Keep only well-formed sample rows: a plain object WITH a real (non-empty string)
+    // symbol. Non-objects AND malformed objects (missing/blank symbol) are dropped rather
+    // than padding the reported list with blank {symbol:'',failures:[]} placeholders that
+    // misrepresent the count.
+    .filter((s): s is { symbol: string } & Record<string, unknown> =>
+      s !== null && typeof s === 'object' && !Array.isArray(s)
+      && typeof (s as Record<string, unknown>).symbol === 'string'
+      && ((s as Record<string, unknown>).symbol as string).length > 0)
+    .slice(0, 8)
+    .map((so) => ({
+      symbol: so.symbol,
+      failures: Array.isArray(so.failures)
+        ? so.failures.filter((f): f is string => typeof f === 'string')
+        : [],
+    }));
+
+  return {
+    screened: num(obj.screened),
+    passed: num(obj.passed),
+    rejected: num(obj.rejected),
+    gate_tally,
+    samples,
+  };
+}
+
 export const RUN_QUALITY_SCREEN_DESCRIPTION = `
 Runs a DETERMINISTIC quality-compounder / economic-moat stock screen and returns the
 ranked shortlist that passes every gate. The gates are fixed in the Stock-scanner
@@ -79,6 +150,18 @@ engine (not re-decided per call):
 - Requires the local Stock-scanner project + its Finnhub/Polygon keys; without keys it
   degrades to slower Yahoo data. Returns a clear error (not a crash) if the scan fails.
 - Deterministic and auditable — the same inputs give the same shortlist.
+
+## Interpreting an empty result (passed: 0)
+- Zero passers is NOT a backend or data failure. The scan ran; the names simply did not
+  clear the (strict) gates. Read \`failure_summary.gate_tally\` to state WHY — e.g.
+  "19 of 40 failed Debt/Equity < 0.5" — and cite \`failure_summary.samples\` for the
+  specific tickers and their exact failing metric values.
+- NEVER attribute 0 passers to "backend limitations". And NEVER invent or guess a metric
+  value: if a number is not present in \`picks\` or \`failure_summary\`, say it is not
+  available — do not fill it in from memory (a real screen showed KO's Debt/Equity at
+  ~1.41, not 0.00; the tool's own data is the source of truth).
+- To surface passers, screen a broader set of names (pass a wider \`symbols\` list) rather
+  than loosening the gates in your reasoning.
 `.trim();
 
 const QualityScreenInputSchema = z.object({
@@ -99,7 +182,7 @@ const QualityScreenInputSchema = z.object({
 export const runQualityScreen = new DynamicStructuredTool({
   name: 'run_quality_screen',
   description:
-    'Run the deterministic quality-moat stock screen (ROE≥15%, ROIC≥15%, D/E<0.5, current>1.5, interest-coverage>10, PEG<1.5, revenue-growth>8%, market-cap>$10B, + Piotroski/Mohanram/Beneish quality) and return the ranked shortlist that passed. Pass `symbols` to screen specific tickers, or omit for the default large-cap universe. The economic-moat verdict is a separate step — run assess_moat on the survivors.',
+    'Run the deterministic quality-moat stock screen (ROE≥15%, ROIC≥15%, D/E<0.5, current>1.5, interest-coverage>10, PEG<1.5, revenue-growth>8%, market-cap>$10B, + Piotroski/Mohanram/Beneish quality) and return the ranked shortlist that passed. Pass `symbols` to screen specific tickers, or omit for the default large-cap universe. On 0 passers, returns a failure_summary (per-gate tally + sample reasons) explaining WHY names were rejected — this is not an error and not a backend limitation. The economic-moat verdict is a separate step — run assess_moat on the survivors.',
   schema: QualityScreenInputSchema,
   func: async (input) => {
     if (!qualityScreenAvailable()) {
@@ -117,7 +200,10 @@ export const runQualityScreen = new DynamicStructuredTool({
 
     const profile = input.relaxed ? 'quality_moat_relaxed' : 'quality_moat';
     const outPath = join(tmpdir(), `qm_scan_${process.pid}_${Date.now()}.json`);
-    const args = ['--profile', profile, '--json', outPath, '--top', String(input.top ?? 25)];
+    const rejPath = join(tmpdir(), `qm_rej_${process.pid}_${Date.now()}.json`);
+    // --rejections-json is placed BEFORE the variadic --symbols spread, which must stay
+    // last (argparse nargs='+' would otherwise swallow the flag as a ticker).
+    const args = ['--profile', profile, '--json', outPath, '--rejections-json', rejPath, '--top', String(input.top ?? 25)];
     if (symbols.length) args.push('--symbols', ...symbols);
 
     const r = await runScanner(args);
@@ -135,15 +221,36 @@ export const runQualityScreen = new DynamicStructuredTool({
     // tool always returns a formatToolResult, never throws.
     if (!Array.isArray(records)) records = [];
 
+    // Read the sibling rejections file the SAME defensive way (try/catch + finally
+    // cleanup) so a missing/garbage file degrades to no summary — never a throw (D6).
+    // On a 0-passers run this is what explains WHY names failed (per-gate tally + samples).
+    let failureSummary: FailureSummary | undefined;
+    try {
+      failureSummary = normalizeFailureSummary(JSON.parse(readFileSync(rejPath, 'utf-8')));
+    } catch {
+      // rejections file missing / unreadable / not JSON — degrade to no summary.
+    } finally {
+      try { rmSync(rejPath, { force: true }); } catch { /* best-effort cleanup */ }
+    }
+
     if (!r.ok && records.length === 0) {
       logger.warn(`[quality_screen] scan failed (exit ${r.code}): ${(r.stderr || '').slice(-300)}`);
       return formatToolResult(
         {
           error: `Quality screen failed${r.code !== null ? ` (exit ${r.code})` : ''}. The scanner needs Finnhub/Polygon keys in its .env for a full run.`,
           detail: (r.stderr || '').slice(-400),
+          // Surface any partial tally even on a hard failure, so the model still has a reason.
+          ...(failureSummary ? { failure_summary: failureSummary } : {}),
         },
         [],
       );
+    }
+
+    // Observability: the scanner exited non-zero yet still produced usable records
+    // (e.g. a crash AFTER the picks were written). Surface it so a silent post-picks
+    // failure is visible in logs instead of looking like a fully clean run.
+    if (!r.ok) {
+      logger.warn(`[quality_screen] scanner exited ${r.code} but returned ${records.length} record(s); result may be partial: ${(r.stderr || '').slice(-300)}`);
     }
 
     const picks = records.map((rec) => {
@@ -160,6 +267,9 @@ export const runQualityScreen = new DynamicStructuredTool({
         screened: symbols.length ? symbols : 'default large-cap universe',
         passed: picks.length,
         picks,
+        // Present whenever the scan rejected any names — the reason set behind a short (or
+        // empty) picks list. On passed:0 this is the antidote to "backend limitations".
+        ...(failureSummary ? { failure_summary: failureSummary } : {}),
       },
       ['Stock scanner — quality_moat deterministic gates (ROE/ROIC≥15%, D/E<0.5, current>1.5, interest-cov>10, PEG<1.5, rev>8%, mktcap>$10B). Economic-moat verdict is separate (assess_moat).'],
     );
