@@ -74,11 +74,34 @@ adversarially re-verified. Security: clean. **3 CONFIRMED findings — all fixed
    7 end-to-end integration tests (mock edgartools + stubbed SEC verifier).
 
 **Independent finish-judge (fresh Sonnet agent) → GO.** Confirmed all 3 fixes real + complete,
-re-ran both suites green, verified the byte-identical invariant holds. Flagged 2 minor items: one
-**fixed now** — the loose STI matcher could pick a *noncurrent* marketable-securities row, so
-extraction now prefers exact us-gaap **Current** concepts with a noncurrent-guarded fallback
-(+2 tests); one **deferred** (follow-up) — the Dexter surfacing of the new fields
-(`roic_operating`/`cash_verified`/`cash_verification`) has no unit test (the picks-mapping isn't
-easily testable without spawning Python; the fields are proven to flow via the live scan).
+re-ran both suites green, verified the byte-identical invariant holds. Flagged 2 minor items, **both
+now closed** (below).
+
+## Follow-ups (closed)
+- **Dexter surfacing test gap → FIXED.** The picks-projection was extracted into an exported pure
+  `projectPick(rec)` helper and unit-tested (4 tests): surfaces `roic_operating` / `cash_verified` /
+  `cash_verification`, drops null `cash_verified` while keeping the `cash_verification` string, keeps
+  the `mismatch` string + `false` verdict, and omits internal (`operating_liquidity`) / non-SELECT
+  fields. Dexter now **25 tests + tsc 0**.
+- **Noncurrent-STI matcher → FIXED** (finish-judge item): extraction prefers exact us-gaap **Current**
+  concepts, loose fallback excludes noncurrent/long-term rows (+2 scanner tests).
+
+## Production runtime (verified end-to-end)
+- `run_quality_screen` auto-resolves `SCANNER_PYTHON` to `scanner/.venv/bin/python` when present (else
+  `python3`, with a **load-time warning** so the silent no-edgartools degradation is visible).
+- **The cache carries the flip.** On a cache MISS `get_fundamentals` runs the EDGAR cash enrichment and
+  persists the enriched dict (incl. `operating_liquidity`) to the `fundamentals` table; cache HITS then
+  return it. Verified through the **actual tool** (no `--no-cache`): GOOGL passes with **book ROIC
+  0.1428 (< 15%) rescued by operating ROIC 0.1962, `cash_verified: true`** — and a subsequent ~2s cache
+  HIT still flips (row's `operating_liquidity`/`cash_verification` persisted). NVDA flips too, honestly
+  `unverified` (custom-taxonomy marketable securities).
+- **Transient:** rows cached *before* this shipped lack `operating_liquidity` and suppress the flip until
+  they refresh (24h TTL) or are evicted. Self-healing; a deploy can force it by clearing the
+  `fundamentals` table.
+
+## Discovered (out of scope — flagged, not fixed)
+- **M-score gate is cache-state-dependent for NVDA:** blocked by `Mscore(M8)` on a fresh fetch, passes on
+  the cache-hit re-run. Pre-existing (unrelated to the cash work — Beneish inputs, not `operating_liquidity`).
+  Worth a separate investigation.
 
 Phase 03 complete (03-01 + 03-02 + 03-03). Next: **Phase 04** (backtest + universe perf).

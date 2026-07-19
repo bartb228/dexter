@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { normalizeFailureSummary, buildScanArgs, describeScreened } from './quality-screen.js';
+import { normalizeFailureSummary, buildScanArgs, describeScreened, projectPick } from './quality-screen.js';
 
 // Plan 01-02 Task 2: unit-test the pure summary-normalizer (no scanner spawn). Its job is
 // to turn whatever the scanner's --rejections-json file contained into a clean
@@ -239,5 +239,37 @@ describe('describeScreened', () => {
   });
   test('no symbols, universe omitted → "default large-cap universe"', () => {
     expect(describeScreened([], undefined)).toBe('default large-cap universe');
+  });
+});
+
+describe('projectPick — SELECT projection (Plan 03-01 field surfacing)', () => {
+  test('surfaces operating-ROIC provenance fields when the scanner provides them', () => {
+    const out = projectPick({
+      symbol: 'GOOGL', roic: 0.1515, roic_operating: 0.2081,
+      cash_verified: true, cash_verification: 'verified',
+      operating_liquidity: 126843000000, // internal — NOT in SELECT
+    });
+    expect(out.roic_operating).toBe(0.2081);
+    expect(out.cash_verified).toBe(true);
+    expect(out.cash_verification).toBe('verified');
+    expect(out.roic).toBe(0.1515); // book ROIC still surfaced alongside
+    expect('operating_liquidity' in out).toBe(false); // internal field not leaked
+  });
+
+  test('unverified row: null cash_verified is omitted, but cash_verification survives', () => {
+    const out = projectPick({ symbol: 'X', cash_verified: null, cash_verification: 'unverified' });
+    expect('cash_verified' in out).toBe(false); // null → dropped (present-if-available)
+    expect(out.cash_verification).toBe('unverified'); // string self-documents the state
+  });
+
+  test('mismatch row surfaces the mismatch string and false verdict', () => {
+    const out = projectPick({ symbol: 'Y', cash_verified: false, cash_verification: 'mismatch: edgar=1 sec=2 rel=1.00' });
+    expect(out.cash_verified).toBe(false); // false is a real value, kept
+    expect(String(out.cash_verification)).toContain('mismatch');
+  });
+
+  test('omits undefined/absent SELECT fields and any non-SELECT field', () => {
+    const out = projectPick({ symbol: 'Z', roic: undefined, not_selected: 'nope' });
+    expect(out).toEqual({ symbol: 'Z' });
   });
 });

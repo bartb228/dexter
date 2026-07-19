@@ -66,6 +66,34 @@ const SELECT = [
 ] as const;
 
 /**
+ * Project a raw scanner record down to the SELECT fields the model sees. Present-if-available:
+ * `undefined`/`null` values are omitted to keep the payload lean (so an "unverified" row, whose
+ * scanner-side `cash_verified` is null, surfaces `cash_verification: "unverified"` without a
+ * dangling `cash_verified`). Extracted as a pure helper so the Plan-03-01 surfacing of
+ * roic_operating / cash_verified / cash_verification is unit-testable without spawning Python.
+ */
+export function projectPick(rec: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of SELECT) {
+    if (rec[k] !== undefined && rec[k] !== null) out[k] = rec[k];
+  }
+  return out;
+}
+
+// Production observability: when neither a scanner venv nor an explicit interpreter is available,
+// the tool falls back to system `python3`, which may lack edgartools>=5 (Python>=3.10) — making
+// the cash-adjusted (operating) ROIC path silently INERT (the screen still runs on book ROIC).
+// Surface that once at load so a missing flip is a visible config gap, not a silent mystery.
+if (SCANNER_PYTHON === 'python3' && !process.env.STOCK_SCANNER_PYTHON) {
+  logger.warn(
+    '[quality_screen] no scanner/.venv found and STOCK_SCANNER_PYTHON unset — using system ' +
+    'python3. The operating-ROIC (cash-adjusted) path needs edgartools>=5 (Python>=3.10); if ' +
+    'python3 lacks it, screens run on book ROIC only (no cash-rich-compounder rescue). Create ' +
+    'scanner/.venv or set STOCK_SCANNER_PYTHON to enable it.',
+  );
+}
+
+/**
  * Per-gate rejection summary the scanner writes to `--rejections-json`. Attached to the
  * tool result so a 0-passers screen is SELF-EXPLAINING (which gates blocked how many
  * names, with sample reasons) rather than misread as a "backend limitation".
@@ -376,13 +404,7 @@ export const runQualityScreen = new DynamicStructuredTool({
       logger.warn(`[quality_screen] scanner exited ${r.code} but returned ${records.length} record(s); result may be partial: ${(r.stderr || '').slice(-300)}`);
     }
 
-    const picks = records.map((rec) => {
-      const out: Record<string, unknown> = {};
-      for (const k of SELECT) {
-        if (rec[k] !== undefined && rec[k] !== null) out[k] = rec[k];
-      }
-      return out;
-    });
+    const picks = records.map(projectPick);
 
     return formatToolResult(
       {
