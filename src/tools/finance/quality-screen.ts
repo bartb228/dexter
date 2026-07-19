@@ -81,6 +81,14 @@ export interface FailureSummary {
     margin: number;
     gates: ReadonlyArray<Readonly<{ gate: string; value: number | null; threshold: number | null }>>;
   }>>;
+  /** Plan 03-03: per-gate "what-if" — how many names are SOLE-blocked by each gate (fail only
+   * it) + the closest metric value that would admit one. Answers "what would get more passers?" */
+  readonly sensitivity: Readonly<Record<string, Readonly<{
+    sole_blockers: number;
+    would_admit_at: number | null;
+    threshold: number | null;
+    examples: readonly string[];
+  }>>>;
 }
 
 /**
@@ -147,6 +155,23 @@ export function normalizeFailureSummary(raw: unknown): FailureSummary | undefine
         })),
     }));
 
+  const numOrNull = (v: unknown): number | null =>
+    (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const sensitivity: Record<string, { sole_blockers: number; would_admit_at: number | null; threshold: number | null; examples: string[] }> = {};
+  const rawSens = obj.sensitivity;
+  if (rawSens !== null && typeof rawSens === 'object' && !Array.isArray(rawSens)) {
+    for (const [gate, v] of Object.entries(rawSens as Record<string, unknown>)) {
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) continue;
+      const vo = v as Record<string, unknown>;
+      sensitivity[gate] = {
+        sole_blockers: num(vo.sole_blockers),
+        would_admit_at: numOrNull(vo.would_admit_at),
+        threshold: numOrNull(vo.threshold),
+        examples: (Array.isArray(vo.examples) ? vo.examples : []).filter((e): e is string => typeof e === 'string').slice(0, 5),
+      };
+    }
+  }
+
   return {
     screened: num(obj.screened),
     passed: num(obj.passed),
@@ -154,6 +179,7 @@ export function normalizeFailureSummary(raw: unknown): FailureSummary | undefine
     gate_tally,
     samples,
     near_miss,
+    sensitivity,
   };
 }
 
@@ -243,6 +269,10 @@ engine (not re-decided per call):
   close they came (fewest gates × smallest margin), each with the exact failing metric. e.g.
   "GOOGL missed ONLY ROIC (14.3% vs the 15% floor)". A name one gate away by a hair is a
   watchlist candidate, not a flat reject — surface it as such instead of implying it failed badly.
+- \`failure_summary.sensitivity\` answers "what would it take to get more passers?" — per gate,
+  how many names it SOLE-blocks (fail only it) + the closest metric value that would admit one
+  (e.g. "ROIC sole-blocks 8; the nearest is DXCM at 0.123 vs the 0.15 floor"). Cite it rather
+  than speculating about which gate to loosen.
 `.trim();
 
 const QualityScreenInputSchema = z.object({

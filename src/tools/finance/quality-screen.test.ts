@@ -29,6 +29,7 @@ describe('normalizeFailureSummary', () => {
       gate_tally: { ROIC: 22, 'Debt/Eq': 19, CurrentRatio: 21 },
       samples: [{ symbol: 'KO', failures: ['Debt/Eq=1.41 > 0.5', 'ROIC=0.108 < 15%'] }],
       near_miss: [],
+      sensitivity: {},
     });
   });
 
@@ -65,6 +66,7 @@ describe('normalizeFailureSummary', () => {
       gate_tally: {},
       samples: [],
       near_miss: [],
+      sensitivity: {},
     });
   });
 
@@ -84,6 +86,7 @@ describe('normalizeFailureSummary', () => {
       gate_tally: { Good: 3 }, // ROIC:-7 dropped
       samples: [],
       near_miss: [],
+      sensitivity: {},
     });
   });
 
@@ -140,6 +143,25 @@ describe('normalizeFailureSummary', () => {
     const out = normalizeFailureSummary({ gate_tally: {}, samples: [], near_miss: many });
     expect(out?.near_miss).toHaveLength(15);
     expect(out?.near_miss[0].margin).toBe(0); // negative margin clamped (>= 0 invariant)
+  });
+
+  // Plan 03-03: sensitivity coercion (never throws — D6).
+  test('sensitivity is coerced; malformed gate entries dropped', () => {
+    const out = normalizeFailureSummary({
+      gate_tally: {}, samples: [], near_miss: [],
+      sensitivity: {
+        ROIC: { sole_blockers: 8, would_admit_at: 0.143, threshold: 0.15, examples: ['DXCM', 'GOOGL', 42] },
+        Bad: 'not-an-object',
+        DebtEq: { sole_blockers: -3, would_admit_at: 'x', threshold: null, examples: 'nope' },
+      },
+    });
+    expect(out?.sensitivity.ROIC).toEqual({
+      sole_blockers: 8, would_admit_at: 0.143, threshold: 0.15, examples: ['DXCM', 'GOOGL'],
+    });
+    expect(out?.sensitivity.Bad).toBeUndefined(); // non-object gate entry dropped
+    expect(out?.sensitivity.DebtEq).toEqual({
+      sole_blockers: 0, would_admit_at: null, threshold: null, examples: [], // -3→0, 'x'→null, 'nope'→[]
+    });
   });
 });
 
