@@ -99,9 +99,15 @@ now closed** (below).
   they refresh (24h TTL) or are evicted. Self-healing; a deploy can force it by clearing the
   `fundamentals` table.
 
-## Discovered (out of scope — flagged, not fixed)
-- **M-score gate is cache-state-dependent for NVDA:** blocked by `Mscore(M8)` on a fresh fetch, passes on
-  the cache-hit re-run. Pre-existing (unrelated to the cash work — Beneish inputs, not `operating_liquidity`).
-  Worth a separate investigation.
+## Discovered while verifying production runtime → root-caused + FIXED (scanner)
+- **The Beneish M-score fraud gate was silently disabled on every cache hit.** `data["mscore"]` is an
+  `Mscore` dataclass; the fundamentals cache serializes it via `dataclasses.asdict` (a plain dict), but
+  every scoring consumer reads it via **attribute access** (`getattr(mscore, "verdict")`). On a cache hit
+  `getattr(dict, "verdict", None)` returns `None`, so the gate no-ops — a flagged manipulator (NVDA)
+  passed on a cache hit but was blocked on a fresh fetch. **Fix:** `DataSource.get_fundamentals` rehydrates
+  the cached dict back into an `Mscore` object (new `manipulation_score.rehydrate_mscore`), restoring the
+  `f["mscore"] is Mscore | None` invariant for all readers; the low-level `Cache`/dashboard dict contract
+  is untouched. Failing test written first (reproduced), full suite green (1013 py3.9 / 1029 venv), and
+  live-verified: NVDA is now blocked on **both** the fresh and the cache-hit run.
 
 Phase 03 complete (03-01 + 03-02 + 03-03). Next: **Phase 04** (backtest + universe perf).
