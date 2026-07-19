@@ -28,6 +28,7 @@ describe('normalizeFailureSummary', () => {
       rejected: 38,
       gate_tally: { ROIC: 22, 'Debt/Eq': 19, CurrentRatio: 21 },
       samples: [{ symbol: 'KO', failures: ['Debt/Eq=1.41 > 0.5', 'ROIC=0.108 < 15%'] }],
+      near_miss: [],
     });
   });
 
@@ -63,6 +64,7 @@ describe('normalizeFailureSummary', () => {
       rejected: 0,
       gate_tally: {},
       samples: [],
+      near_miss: [],
     });
   });
 
@@ -81,6 +83,7 @@ describe('normalizeFailureSummary', () => {
       rejected: 0,
       gate_tally: { Good: 3 }, // ROIC:-7 dropped
       samples: [],
+      near_miss: [],
     });
   });
 
@@ -104,6 +107,39 @@ describe('normalizeFailureSummary', () => {
       ],
     });
     expect(out?.samples).toEqual([{ symbol: 'KO', failures: ['ROIC=x'] }]);
+  });
+
+  // Plan 03-02: near_miss passthrough + defensive coercion (never throws — D6).
+  test('near_miss is coerced; malformed entries/gates dropped', () => {
+    const out = normalizeFailureSummary({
+      screened: 40, passed: 0, rejected: 38, gate_tally: { ROIC: 22 }, samples: [],
+      near_miss: [
+        { symbol: 'GOOGL', n_failed: 1, margin: 0.048, gates: [{ gate: 'ROIC', value: 0.143, threshold: 0.15 }] },
+        'junk',            // non-object → dropped
+        { n_failed: 1 },   // no symbol → dropped
+        { symbol: 'X', n_failed: -2, margin: 'bad', gates: [{ gate: 'Debt/Eq', value: 'x', threshold: 0.5 }, 42] },
+      ],
+    });
+    expect(out?.near_miss.length).toBe(2);
+    expect(out?.near_miss[0]).toEqual({
+      symbol: 'GOOGL', n_failed: 1, margin: 0.048, gates: [{ gate: 'ROIC', value: 0.143, threshold: 0.15 }],
+    });
+    // n_failed clamped >= 0; non-number margin → 0; non-number gate value → null; the junk gate (42) dropped.
+    expect(out?.near_miss[1]).toEqual({
+      symbol: 'X', n_failed: 0, margin: 0, gates: [{ gate: 'Debt/Eq', value: null, threshold: 0.5 }],
+    });
+  });
+
+  test('non-array or missing near_miss → [] (never throws)', () => {
+    expect(normalizeFailureSummary({ gate_tally: {}, samples: [], near_miss: 'nope' })?.near_miss).toEqual([]);
+    expect(normalizeFailureSummary({ gate_tally: {}, samples: [] })?.near_miss).toEqual([]);
+  });
+
+  test('near_miss is capped at 15 and negative margin is clamped to 0', () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ symbol: `S${i}`, n_failed: 1, margin: -1, gates: [] }));
+    const out = normalizeFailureSummary({ gate_tally: {}, samples: [], near_miss: many });
+    expect(out?.near_miss).toHaveLength(15);
+    expect(out?.near_miss[0].margin).toBe(0); // negative margin clamped (>= 0 invariant)
   });
 });
 

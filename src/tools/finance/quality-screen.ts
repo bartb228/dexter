@@ -73,6 +73,14 @@ export interface FailureSummary {
   readonly gate_tally: Readonly<Record<string, number>>;
   /** capped sample of per-name reasons (the scanner caps at 8; re-capped here defensively). */
   readonly samples: ReadonlyArray<Readonly<{ symbol: string; failures: readonly string[] }>>;
+  /** Plan 03-02: "who almost passed" — rejected names ranked by (fewest gates, smallest
+   * margin), scanner-ranked. A 1-gate near-miss (e.g. GOOGL, ROIC 0.143 vs 0.15) tops it. */
+  readonly near_miss: ReadonlyArray<Readonly<{
+    symbol: string;
+    n_failed: number;
+    margin: number;
+    gates: ReadonlyArray<Readonly<{ gate: string; value: number | null; threshold: number | null }>>;
+  }>>;
 }
 
 /**
@@ -117,12 +125,35 @@ export function normalizeFailureSummary(raw: unknown): FailureSummary | undefine
         : [],
     }));
 
+  const rawNear = Array.isArray(obj.near_miss) ? obj.near_miss : [];
+  const near_miss = rawNear
+    .filter((n): n is { symbol: string } & Record<string, unknown> =>
+      n !== null && typeof n === 'object' && !Array.isArray(n)
+      && typeof (n as Record<string, unknown>).symbol === 'string'
+      && ((n as Record<string, unknown>).symbol as string).length > 0)
+    .slice(0, 15)
+    .map((no) => ({
+      symbol: no.symbol,
+      n_failed: num(no.n_failed),
+      margin: typeof no.margin === 'number' && Number.isFinite(no.margin) ? Math.max(0, no.margin) : 0,
+      gates: (Array.isArray(no.gates) ? no.gates : [])
+        .filter((g): g is { gate: string } & Record<string, unknown> =>
+          g !== null && typeof g === 'object' && !Array.isArray(g)
+          && typeof (g as Record<string, unknown>).gate === 'string')
+        .map((g) => ({
+          gate: g.gate,
+          value: typeof g.value === 'number' && Number.isFinite(g.value) ? g.value : null,
+          threshold: typeof g.threshold === 'number' && Number.isFinite(g.threshold) ? g.threshold : null,
+        })),
+    }));
+
   return {
     screened: num(obj.screened),
     passed: num(obj.passed),
     rejected: num(obj.rejected),
     gate_tally,
     samples,
+    near_miss,
   };
 }
 
@@ -208,6 +239,10 @@ engine (not re-decided per call):
 - To surface passers, screen a broader/more-appropriate set of names — e.g.
   \`universe: 'quality_growth'\` (a curated compounder shortlist), or a wider \`symbols\`
   list — rather than loosening the gates in your reasoning.
+- When passers are few, cite \`failure_summary.near_miss\` — the rejected names ranked by how
+  close they came (fewest gates × smallest margin), each with the exact failing metric. e.g.
+  "GOOGL missed ONLY ROIC (14.3% vs the 15% floor)". A name one gate away by a hair is a
+  watchlist candidate, not a flat reject — surface it as such instead of implying it failed badly.
 `.trim();
 
 const QualityScreenInputSchema = z.object({
