@@ -73,4 +73,12 @@ adversarially re-verified. Security: clean. **3 CONFIRMED findings — all fixed
 3. **`fetch_cash_and_investments` untested (HIGH):** only pure helpers were covered. **Fix:** added
    7 end-to-end integration tests (mock edgartools + stubbed SEC verifier).
 
+**Independent finish-judge (fresh Sonnet agent) → GO.** Confirmed all 3 fixes real + complete,
+re-ran both suites green, verified the byte-identical invariant holds. Flagged 2 minor items: one
+**fixed now** — the loose STI matcher could pick a *noncurrent* marketable-securities row, so
+extraction now prefers exact us-gaap **Current** concepts with a noncurrent-guarded fallback
+(+2 tests); one **deferred** (follow-up) — the Dexter surfacing of the new fields
+(`roic_operating`/`cash_verified`/`cash_verification`) has no unit test (the picks-mapping isn't
+easily testable without spawning Python; the fields are proven to flow via the live scan).
+
 Phase 03 complete (03-01 + 03-02 + 03-03). Next: **Phase 04** (backtest + universe perf).
