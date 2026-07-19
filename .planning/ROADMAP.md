@@ -1,6 +1,7 @@
 # Roadmap: Quality-Screen Observability & Universe Selection
 
-Depth: quick (2 phases, 3 plans). Derived from actual work, not padded.
+Depth: Phases 01–02 shipped (3 plans). Milestone v2 = Phases 03–04 (design:
+docs/plans/2026-07-18-quality-screen-v2-design.md).
 
 ## Phase 01 — Failure Observability
 **Goal:** A 0-passers screen is never misdiagnosed again. Surface *why* names fail —
@@ -25,6 +26,31 @@ is unsuitable for a quality-growth screen; expose universe choice + a fast curat
 
 **Depends on:** Phase 01 (a broad universe makes the failure_summary far more valuable —
 seeing 400 rejected with a gate tally is the payoff).
+
+## Phase 03 — Screen Accuracy & Explainability (v2)
+**Goal:** Fix the measurement artifacts and make the screen self-explaining beyond a tally.
+
+- **03-01** (scanner + Dexter): operating (cash-adjusted) ROIC alongside book ROIC — gate
+  passes if `max(book, operating) ≥ 15%`; both reported; tighter tax/debt inputs. Acceptance:
+  NVDA + GOOGL flip to passing.
+- **03-02** (scanner + Dexter): Plan-A augmentation of `passes_screen` to emit structured
+  `GateResult`s alongside the (byte-identical) failure strings; a ranked `near_miss` list on
+  the tool result; `gate_tally` keys become real gate names (retires the 01-01 head-token map).
+- **03-03** (scanner + Dexter): gate-sensitivity "what-if" report (loosen gate X → +N passers)
+  + fix `--top` truncation for single-profile scans.
+
+**Depends on:** Phases 01–02. 03-02 shares `scoring.py` with 03-01 (sequential); 03-03 uses
+03-02's structured results.
+
+## Phase 04 — Validation & Scale (v2, light-specced)
+**Goal:** Prove the screen earns its strictness, and make broad universes fast.
+
+- **04-01** (scanner, research): backtest `quality_moat` passers vs the index over a historical
+  window; report hit-rate / excess return. Methodology designed when reached.
+- **04-02** (scanner): cache resolved index membership + a cheap market-cap/price pre-filter so
+  `sp500`/`russell` finish inside the tool's 300s cap.
+
+**Depends on:** Phase 03 (a trustworthy screen is worth backtesting).
 
 ## Domain Expertise
 

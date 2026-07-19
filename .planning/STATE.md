@@ -22,8 +22,12 @@ universe:quality_growth → passed 4 (DECK/MNST/RMD/LRCX) + failure_summary expl
 The original misdiagnosis ("0 passers → backend limitations" + hallucinated KO Debt/Eq) is
 structurally impossible now.
 
-Out-of-scope follow-up (flagged, not fixed): scanner single-profile path may ignore `--top`
-truncation ("Ignored for single-profile mode") → run_quality_screen `top` possibly inert.
+## Milestone v2 — PLANNED 2026-07-18 (executing autonomously)
+Design: docs/plans/2026-07-18-quality-screen-v2-design.md. Phase 03 (screen accuracy &
+explainability): 03-01 operating cash-adjusted ROIC (max(book,operating)≥15%; NVDA/GOOGL flip),
+03-02 Plan-A structured GateResults → near_miss + named tally, 03-03 gate-sensitivity + fix
+--top. Phase 04 (light): 04-01 backtest, 04-02 universe perf (caching + pre-filter; also fixes
+the --top-adjacent scale issue). Executing Phase 03 via task-loop + Workflow review panels.
 
 ## Accumulated decisions (constrain execution)
 - **D1 — separate rejections file.** Emit rejections via a NEW `--rejections-json <path>`,
