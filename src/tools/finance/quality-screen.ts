@@ -19,7 +19,12 @@ import { logger } from '../../utils/logger.js';
  * charset; the command/cwd are fixed config — no user string reaches a shell.
  */
 const SCANNER_DIR = process.env.STOCK_SCANNER_DIR || '/Users/Ambartsum/code/Stock scanner/scanner';
-const SCANNER_PYTHON = process.env.STOCK_SCANNER_PYTHON || 'python3';
+// Prefer the scanner's own venv python when it exists: the cash-adjusted (operating) ROIC
+// path (Plan 03-01) needs edgartools>=5, which requires Python>=3.10. System `python3` may be
+// 3.9 (no edgartools) → cash enrichment is silently inert → no flip. Falling back to `python3`
+// keeps the screen working (just without the operating-ROIC rescue). $STOCK_SCANNER_PYTHON wins.
+const VENV_PYTHON = join(SCANNER_DIR, '.venv', 'bin', 'python');
+const SCANNER_PYTHON = process.env.STOCK_SCANNER_PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
 const SCANNER_SCRIPT = 'scanner.py';
 const SCAN_TIMEOUT_MS = 300_000; // a universe scan is minutes; a --symbols run is faster
 const MAX_BUF = 1 * 1024 * 1024;
@@ -49,10 +54,15 @@ function runScanner(args: string[]): Promise<ProcResult> {
 
 /** Screen-relevant fields surfaced to the model (present-if-available; keeps payload lean). */
 const SELECT = [
-  'symbol', 'company', 'name', 'sector', 'composite_score', 'roe', 'roic', 'debt_eq',
-  'current_ratio', 'interest_coverage', 'peg_ratio', 'pe', 'rev_growth', 'eps_growth',
+  'symbol', 'company', 'name', 'sector', 'composite_score', 'roe', 'roic', 'roic_operating',
+  'debt_eq', 'current_ratio', 'interest_coverage', 'peg_ratio', 'pe', 'rev_growth', 'eps_growth',
   'operating_margin', 'gross_margin', 'ev_ebitda', 'market_cap', 'best_fit_profile',
   'passing_profiles',
+  // Plan 03-01: cash-adjusted ("operating") ROIC provenance. roic_operating nets cash +
+  // short-term investments out of invested capital (rescues cash-rich compounders past the
+  // ROIC gate); cash_verified/cash_verification record the SEC cross-source check of that
+  // netting ("verified" | "unverified" | "mismatch:…"). Absent when EDGAR isn't wired.
+  'cash_verified', 'cash_verification',
 ] as const;
 
 /**
@@ -297,7 +307,7 @@ const QualityScreenInputSchema = z.object({
 export const runQualityScreen = new DynamicStructuredTool({
   name: 'run_quality_screen',
   description:
-    'Run the deterministic quality-moat stock screen (ROE≥15%, ROIC≥15%, D/E<0.5, current>1.5, interest-coverage>10, PEG<1.5, revenue-growth>8%, market-cap>$10B, + Piotroski/Mohanram/Beneish quality) and return the ranked shortlist that passed. Pass `symbols` to screen specific tickers, or omit for the default large-cap universe. On 0 passers, returns a failure_summary (per-gate tally + sample reasons) explaining WHY names were rejected — this is not an error and not a backend limitation. The economic-moat verdict is a separate step — run assess_moat on the survivors.',
+    'Run the deterministic quality-moat stock screen (ROE≥15%, ROIC≥15%, D/E<0.5, current>1.5, interest-coverage>10, PEG<1.5, revenue-growth>8%, market-cap>$10B, + Piotroski/Mohanram/Beneish quality) and return the ranked shortlist that passed. The ROIC gate uses the HIGHER of book ROIC and cash-adjusted (operating) ROIC — the latter nets cash + short-term investments out of invested capital so cash-rich compounders are not penalized; when a name passes on the operating figure, `roic_operating` and `cash_verified`/`cash_verification` (an independent SEC cross-check of the cash netting) are on the row. Pass `symbols` to screen specific tickers, or omit for the default large-cap universe. On 0 passers, returns a failure_summary (per-gate tally + sample reasons) explaining WHY names were rejected — this is not an error and not a backend limitation. The economic-moat verdict is a separate step — run assess_moat on the survivors.',
   schema: QualityScreenInputSchema,
   func: async (input) => {
     if (!qualityScreenAvailable()) {

@@ -29,6 +29,22 @@ explainability): 03-01 operating cash-adjusted ROIC (max(book,operating)≥15%; 
 --top. Phase 04 (light): 04-01 backtest, 04-02 universe perf (caching + pre-filter; also fixes
 the --top-adjacent scale issue). Executing Phase 03 via task-loop + Workflow review panels.
 
+## ✅ PHASE 03 COMPLETE (2026-07-19, autonomous)
+- **03-02 SHIPPED** (b2cccd4 / 6e159a6): structured `GateResult`s → named `gate_tally` + ranked
+  `near_miss`. **03-03 SHIPPED** (3d00436 / a2a417a): gate `sensitivity` (sole-blockers) + `--top`
+  single-profile fix.
+- **03-01 SHIPPED**: cash-adjusted (operating) ROIC — ROIC gate passes on `max(book, operating)≥15%`;
+  cash + short-term investments extracted from edgartools 5.x (dimensional-filtered + sanity guard);
+  **SEC `companyconcept` cross-source verification, period-aligned**, fail-safe drop-on-mismatch via
+  a decoupled `operating_liquidity` key. Data-layer unblocked with a Python-3.11 venv
+  (`scanner/.venv`, edgartools 5.42). Live: GOOGL flips to PASSED (op ROIC 0.208, `verified`); NVDA's
+  ROIC gate passes (then M-score blocks). Scanner 1010 (py3.9)/1026 (venv); Dexter 21 + tsc 0.
+  5-lens Workflow review → 3 CONFIRMED findings all fixed (fail-safe defeat, period-mismatch,
+  integration coverage). See `phases/03-screen-accuracy/03-01-SUMMARY.md`.
+- **Production wiring:** Dexter `run_quality_screen` auto-resolves `SCANNER_PYTHON` to the venv when
+  present (edgartools needs py≥3.10), else `python3` (screen still works, no operating-ROIC rescue).
+- Next: **Phase 04** (backtest + universe perf).
+
 ## Accumulated decisions (constrain execution)
 - **D1 — separate rejections file.** Emit rejections via a NEW `--rejections-json <path>`,
   NOT by changing `save_json`'s shape. `save_json` writes a plain array of passers and is
