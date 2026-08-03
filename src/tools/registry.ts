@@ -211,7 +211,8 @@ export function getToolRegistry(model: string): RegisteredTool[] {
     });
   }
 
-  // Options chain + IV/greeks (only when an options-entitled Polygon/Massive key is set).
+  // Options chain + IV/greeks. Available by default via the free CBOE fallback; an
+  // options-entitled Polygon/Massive key upgrades it to real-time when present.
   if (optionsAvailable()) {
     tools.push({
       name: 'get_options_chain',

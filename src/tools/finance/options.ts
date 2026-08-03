@@ -1,16 +1,18 @@
 /**
- * Options chain with implied volatility + greeks, from the Polygon (Massive)
- * options snapshot API — the only vendor in this stack that exposes vendor-computed
- * IV. Requires POLYGON_API_KEY entitled to options (Options Starter tier or higher);
- * the equity-aggregates tier returns 403 NOT_AUTHORIZED for the snapshot.
+ * Options chain with implied volatility + greeks. Primary source is the Polygon
+ * (Massive) options snapshot — the entitled vendor that exposes vendor-computed IV.
+ * When no options-entitled POLYGON_API_KEY is set (or the Polygon call fails, e.g.
+ * 403 NOT_AUTHORIZED on a non-entitled key), it falls back to CBOE's free
+ * delayed-quotes feed (~15-min delayed) so IV/greeks work with no paid key.
  *
- *   /v3/snapshot/options/{ticker}      -> chain (IV/greeks per contract)
- *   /v3/snapshot/options/{ticker}/{c}  -> single contract (reliable IV even after hours)
- *   /v2/aggs/ticker/{ticker}/prev      -> underlying spot (snapshot omits it in the chain)
+ *   Polygon /v3/snapshot/options/{ticker}      -> chain (IV/greeks per contract)
+ *   Polygon /v3/snapshot/options/{ticker}/{c}  -> single contract (reliable IV after hours)
+ *   Polygon /v2/aggs/ticker/{ticker}/prev      -> underlying spot (snapshot omits it)
+ *   CBOE    /global/delayed_quotes/options/{sym}.json -> full chain + spot (free, delayed)
  *
- * Output is filtered to a near-the-money strike window over the nearest expirations
- * so the chain stays small; the model gets an ATM IV term-structure summary plus the
- * per-contract rows.
+ * Both providers normalise to the same OptionRow shape and share the tail
+ * (near-the-money window, nearest expirations, ATM IV term-structure summary), so the
+ * model-facing output is identical regardless of which vendor answered.
  */
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
@@ -27,9 +29,18 @@ function polygonKey(): string {
   return v && v.trim() !== '' && !v.trim().startsWith('your-') ? v.trim() : '';
 }
 
-/** True when an options-capable Polygon key is configured. */
+/** The free CBOE delayed-quotes fallback is on unless explicitly disabled. */
+export function cboeEnabled(): boolean {
+  const v = (process.env.OPTIONS_CBOE_FALLBACK ?? '').trim().toLowerCase();
+  return v !== 'false' && v !== '0' && v !== 'off' && v !== 'no';
+}
+
+/**
+ * True when options data can be served — an entitled Polygon key, or the free CBOE
+ * fallback. CBOE needs no key, so options are available by default.
+ */
 export function optionsAvailable(): boolean {
-  return polygonKey() !== '';
+  return polygonKey() !== '' || cboeEnabled();
 }
 
 // ── Polygon snapshot response shapes (only the fields we read) ──────────────────
@@ -205,10 +216,128 @@ export function buildIvSummary(rows: OptionRow[], spot: number | null): IvSummar
   return summary.sort((a, b) => a.dte - b.dte);
 }
 
+// ── Shared tail (provider-agnostic) ─────────────────────────────────────────────
+
+/** Keep only the nearest `maxExpirations` expiration dates. */
+function narrowToNearest(rows: OptionRow[], maxExpirations: number): OptionRow[] {
+  const keep = new Set([...new Set(rows.map((r) => r.expiration))].sort().slice(0, maxExpirations));
+  return rows.filter((r) => keep.has(r.expiration));
+}
+
+/** Truncate to a token budget and build the final model-facing result. */
+function formatChain(
+  ticker: string,
+  spot: number | null,
+  rows: OptionRow[],
+  source: string,
+  sourceUrl: string,
+): string {
+  const truncated = rows.length > MAX_CONTRACTS;
+  const shown = truncated ? rows.slice(0, MAX_CONTRACTS) : rows;
+  return formatToolResult(
+    {
+      ticker,
+      spot,
+      as_of: todayIso(),
+      source,
+      iv_summary: buildIvSummary(shown, spot),
+      contracts: shown,
+      ...(truncated ? { note: `Showing ${MAX_CONTRACTS} of ${rows.length} contracts; narrow with expiration/option_type/moneyness_pct.` } : {}),
+    },
+    [sourceUrl],
+  );
+}
+
+// ── CBOE free delayed-quotes provider ───────────────────────────────────────────
+// Equities/ETFs: /options/{SYM}.json ; cash indices use a leading underscore (_SPX).
+const CBOE_BASE = 'https://cdn.cboe.com/api/global/delayed_quotes/options';
+
+interface CboeContract {
+  option?: string; // OCC symbol, e.g. "AAPL260803C00205000"
+  iv?: number; // decimal fraction (matches Polygon), NOT percent
+  delta?: number;
+  gamma?: number;
+  theta?: number;
+  vega?: number;
+  open_interest?: number;
+  volume?: number;
+  last_trade_price?: number;
+}
+interface CboeResponse {
+  data?: { options?: CboeContract[]; current_price?: number; close?: number };
+}
+
+/**
+ * Parse an OCC option symbol from the right (roots vary in length):
+ * last 8 = strike×1000, char[-9] = C/P, [-15..-9] = YYMMDD, remainder = root.
+ * Exported for tests.
+ */
+export function parseOccSymbol(occ: string): { expiration: string; type: 'call' | 'put'; strike: number } | null {
+  if (typeof occ !== 'string' || occ.length < 16) return null;
+  const s = occ.trim().toUpperCase();
+  const strikePart = s.slice(-8);
+  const cp = s.charAt(s.length - 9);
+  const datePart = s.slice(s.length - 15, s.length - 9);
+  if (!/^\d{8}$/.test(strikePart) || !/^\d{6}$/.test(datePart) || (cp !== 'C' && cp !== 'P')) return null;
+  const month = Number(datePart.slice(2, 4));
+  const day = Number(datePart.slice(4, 6));
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return {
+    expiration: `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`,
+    type: cp === 'C' ? 'call' : 'put',
+    strike: Number(strikePart) / 1000,
+  };
+}
+
+/** Map a raw CBOE delayed-quote contract to a normalised row (exported for tests). */
+export function cboeRowFromContract(c: CboeContract): OptionRow | null {
+  const parsed = c.option ? parseOccSymbol(c.option) : null;
+  if (!parsed) return null;
+  const last = typeof c.last_trade_price === 'number' && c.last_trade_price > 0 ? c.last_trade_price : undefined;
+  return {
+    expiration: parsed.expiration,
+    type: parsed.type,
+    strike: parsed.strike,
+    iv: round(c.iv, 4),
+    delta: round(c.delta, 4),
+    gamma: round(c.gamma, 4),
+    theta: round(c.theta, 4),
+    vega: round(c.vega, 4),
+    open_interest: typeof c.open_interest === 'number' ? c.open_interest : null,
+    volume: typeof c.volume === 'number' ? c.volume : null,
+    last: round(last, 2),
+    dte: daysToExpiry(parsed.expiration),
+  };
+}
+
+async function fetchCboeRaw(sym: string): Promise<CboeResponse | null> {
+  try {
+    const res = await fetch(`${CBOE_BASE}/${encodeURIComponent(sym)}.json`);
+    if (!res.ok) return null;
+    return (await res.json()) as CboeResponse;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch + normalise a full CBOE chain (never throws — returns an error shape instead). */
+async function fetchCboe(ticker: string): Promise<{ spot: number | null; rows: OptionRow[] } | { error: string }> {
+  let body = await fetchCboeRaw(ticker);
+  if (!body?.data?.options?.length) body = await fetchCboeRaw(`_${ticker}`); // retry as a cash index
+  const data = body?.data;
+  if (!data?.options?.length) return { error: `No CBOE options data for ${ticker}.` };
+  const spot =
+    typeof data.current_price === 'number' ? data.current_price : typeof data.close === 'number' ? data.close : null;
+  const rows = data.options.map(cboeRowFromContract).filter((r): r is OptionRow => r !== null);
+  if (rows.length === 0) return { error: `CBOE returned no parseable option contracts for ${ticker}.` };
+  return { spot, rows };
+}
+
 export const OPTIONS_CHAIN_DESCRIPTION = `
 Fetches an equity **options chain with implied volatility (IV) and greeks** (delta,
 gamma, theta, vega) plus open interest and volume, from the Polygon (Massive) options
-snapshot. Returns a near-the-money slice over the nearest expirations and an ATM IV
+snapshot — or a free CBOE ~15-min-delayed feed when no options-entitled key is set.
+Returns a near-the-money slice over the nearest expirations and an ATM IV
 term-structure summary.
 
 ## When to Use
@@ -224,9 +353,11 @@ term-structure summary.
 
 ## Notes
 
-- US-listed equities/ETFs only. IV/greeks are vendor-computed by Polygon.
+- US-listed equities/ETFs only. IV/greeks are vendor-computed (Polygon, or CBOE on the
+  free fallback). The result's \`source\` field names which vendor answered; CBOE data is
+  ~15-min delayed.
 - Coverage is fullest during market hours; after the close, illiquid strikes may report
-  null IV (the ATM summary back-fills from the per-contract snapshot where possible).
+  null IV (on Polygon the ATM summary back-fills from the per-contract snapshot).
 - Not investment advice.
 `.trim();
 
@@ -256,6 +387,97 @@ const OptionsChainInputSchema = z.object({
     .describe('How many of the nearest expirations to include when no expiration is given. Defaults to 2.'),
 });
 
+type OptionsChainInput = z.infer<typeof OptionsChainInputSchema>;
+
+/**
+ * Polygon (Massive) path. THROWS on a hard failure (non-OK snapshot, e.g. a 403 from a
+ * non-entitled key) so the caller can fall through to CBOE; a successful-but-empty chain
+ * returns its own message (no fallback — the vendor answered, there just wasn't anything).
+ */
+async function runPolygon(ticker: string, input: OptionsChainInput, key: string): Promise<string> {
+  const type = input.option_type === 'both' ? undefined : input.option_type;
+  const spot = await fetchSpot(ticker, key);
+  const window = spot !== null
+    ? { strikeGte: spot * (1 - input.moneyness_pct), strikeLte: spot * (1 + input.moneyness_pct) }
+    : {};
+
+  const contracts = await fetchChain(ticker, key, {
+    ...window,
+    expGte: input.expiration ?? todayIso(),
+    expLte: input.expiration,
+    type,
+  });
+
+  let rows = contracts.map(toRow).filter((r): r is OptionRow => r !== null);
+  if (rows.length === 0) {
+    return formatToolResult(
+      { ticker, spot, error: `No options found for ${ticker}${input.expiration ? ` expiring ${input.expiration}` : ''} in the ±${Math.round(input.moneyness_pct * 100)}% strike window.` },
+      [],
+    );
+  }
+
+  // Keep only the nearest N expirations when no specific date was requested.
+  if (!input.expiration) rows = narrowToNearest(rows, input.max_expirations);
+
+  rows.sort((a, b) => a.dte - b.dte || a.strike - b.strike || a.type.localeCompare(b.type));
+
+  // Back-fill IV/greeks for each expiration's ATM contracts when the chain left them
+  // blank (common after hours) — the per-contract snapshot still computes them.
+  const summarySeed = buildIvSummary(rows, spot);
+  await Promise.all(
+    summarySeed.flatMap((s) =>
+      rows
+        .filter((r) => r.expiration === s.expiration && r.strike === s.atm_strike && r.iv === null)
+        .map(async (r) => {
+          const found = contracts.find(
+            (c) => c.details?.expiration_date === r.expiration && c.details?.strike_price === r.strike && c.details?.contract_type === r.type,
+          );
+          const optTicker = found?.details?.ticker;
+          if (!optTicker) return;
+          const { iv, greeks } = await fetchContractGreeks(ticker, optTicker, key);
+          r.iv = round(iv, 4);
+          r.delta = round(greeks?.delta, 4) ?? r.delta;
+          r.gamma = round(greeks?.gamma, 4) ?? r.gamma;
+          r.theta = round(greeks?.theta, 4) ?? r.theta;
+          r.vega = round(greeks?.vega, 4) ?? r.vega;
+        }),
+    ),
+  );
+
+  return formatChain(ticker, spot, rows, 'Polygon (Massive) options snapshot', 'https://polygon.io (Massive) options snapshot — IV + greeks');
+}
+
+/**
+ * CBOE free delayed-quotes path. Never throws (fetchCboe returns an error shape). CBOE
+ * returns the whole chain already carrying IV/greeks, so filtering is client-side and no
+ * per-contract back-fill is needed.
+ */
+async function runCboe(ticker: string, input: OptionsChainInput): Promise<string> {
+  const fetched = await fetchCboe(ticker);
+  if ('error' in fetched) return formatToolResult({ ticker, error: fetched.error }, []);
+  const { spot } = fetched;
+
+  const type = input.option_type === 'both' ? undefined : input.option_type;
+  let rows = fetched.rows.filter((r) => {
+    if (type && r.type !== type) return false;
+    if (input.expiration && r.expiration !== input.expiration) return false;
+    if (spot !== null && (r.strike < spot * (1 - input.moneyness_pct) || r.strike > spot * (1 + input.moneyness_pct))) return false;
+    return true;
+  });
+
+  if (rows.length === 0) {
+    return formatToolResult(
+      { ticker, spot, error: `No options found for ${ticker}${input.expiration ? ` expiring ${input.expiration}` : ''} in the ±${Math.round(input.moneyness_pct * 100)}% strike window (CBOE).` },
+      [],
+    );
+  }
+
+  if (!input.expiration) rows = narrowToNearest(rows, input.max_expirations);
+  rows.sort((a, b) => a.dte - b.dte || a.strike - b.strike || a.type.localeCompare(b.type));
+
+  return formatChain(ticker, spot, rows, 'CBOE delayed quotes (~15-min delayed)', 'https://www.cboe.com/delayed_quotes/ — free delayed options (IV + greeks)');
+}
+
 export const getOptionsChain = new DynamicStructuredTool({
   name: 'get_options_chain',
   description:
@@ -266,87 +488,25 @@ export const getOptionsChain = new DynamicStructuredTool({
     if (!TICKER_RE.test(ticker)) {
       return formatToolResult({ error: `Invalid ticker '${input.ticker}'. Use a plain symbol like AAPL.` }, []);
     }
+
+    // Polygon primary when an entitled key is configured; fall through to CBOE on a hard
+    // failure (e.g. 403 from a non-entitled key) unless the fallback is disabled.
     const key = polygonKey();
-    if (!key) {
-      return formatToolResult(
-        { error: 'Options data needs POLYGON_API_KEY (Polygon/Massive) entitled to options. Set it in .env.' },
-        [],
-      );
+    if (key) {
+      try {
+        return await runPolygon(ticker, input, key);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        logger.warn(`[Options] ${ticker}: Polygon path failed (${message})${cboeEnabled() ? '; falling back to CBOE delayed quotes' : ''}`);
+        if (!cboeEnabled()) return formatToolResult({ error: message }, []);
+      }
     }
 
-    const type = input.option_type === 'both' ? undefined : input.option_type;
-    const spot = await fetchSpot(ticker, key);
-    const window = spot !== null
-      ? { strikeGte: spot * (1 - input.moneyness_pct), strikeLte: spot * (1 + input.moneyness_pct) }
-      : {};
-
-    let contracts: PolyContract[];
-    try {
-      contracts = await fetchChain(ticker, key, {
-        ...window,
-        expGte: input.expiration ?? todayIso(),
-        expLte: input.expiration,
-        type,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      logger.warn(`[Options] ${ticker}: ${message}`);
-      return formatToolResult({ error: message }, []);
-    }
-
-    let rows = contracts.map(toRow).filter((r): r is OptionRow => r !== null);
-    if (rows.length === 0) {
-      return formatToolResult(
-        { ticker, spot, error: `No options found for ${ticker}${input.expiration ? ` expiring ${input.expiration}` : ''} in the ±${Math.round(input.moneyness_pct * 100)}% strike window.` },
-        [],
-      );
-    }
-
-    // Keep only the nearest N expirations when no specific date was requested.
-    if (!input.expiration) {
-      const keep = new Set([...new Set(rows.map((r) => r.expiration))].sort().slice(0, input.max_expirations));
-      rows = rows.filter((r) => keep.has(r.expiration));
-    }
-
-    rows.sort((a, b) => a.dte - b.dte || a.strike - b.strike || a.type.localeCompare(b.type));
-
-    // Back-fill IV/greeks for each expiration's ATM contracts when the chain left them
-    // blank (common after hours) — the per-contract snapshot still computes them.
-    const summarySeed = buildIvSummary(rows, spot);
-    await Promise.all(
-      summarySeed.flatMap((s) =>
-        rows
-          .filter((r) => r.expiration === s.expiration && r.strike === s.atm_strike && r.iv === null)
-          .map(async (r) => {
-            const found = contracts.find(
-              (c) => c.details?.expiration_date === r.expiration && c.details?.strike_price === r.strike && c.details?.contract_type === r.type,
-            );
-            const optTicker = found?.details?.ticker;
-            if (!optTicker) return;
-            const { iv, greeks } = await fetchContractGreeks(ticker, optTicker, key);
-            r.iv = round(iv, 4);
-            r.delta = round(greeks?.delta, 4) ?? r.delta;
-            r.gamma = round(greeks?.gamma, 4) ?? r.gamma;
-            r.theta = round(greeks?.theta, 4) ?? r.theta;
-            r.vega = round(greeks?.vega, 4) ?? r.vega;
-          }),
-      ),
-    );
-
-    const truncated = rows.length > MAX_CONTRACTS;
-    const shown = truncated ? rows.slice(0, MAX_CONTRACTS) : rows;
+    if (cboeEnabled()) return await runCboe(ticker, input);
 
     return formatToolResult(
-      {
-        ticker,
-        spot,
-        as_of: todayIso(),
-        source: 'Polygon (Massive) options snapshot',
-        iv_summary: buildIvSummary(shown, spot),
-        contracts: shown,
-        ...(truncated ? { note: `Showing ${MAX_CONTRACTS} of ${rows.length} contracts; narrow with expiration/option_type/moneyness_pct.` } : {}),
-      },
-      ['https://polygon.io (Massive) options snapshot — IV + greeks'],
+      { error: 'Options data needs POLYGON_API_KEY (Polygon/Massive) entitled to options, or the free CBOE fallback enabled (OPTIONS_CBOE_FALLBACK).' },
+      [],
     );
   },
 });
