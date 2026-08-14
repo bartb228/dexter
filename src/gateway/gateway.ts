@@ -25,6 +25,7 @@ import type { GroupContext } from '../agent/prompts.js';
 import { appendFileSync } from 'node:fs';
 import { dexterPath } from '../utils/paths.js';
 import { getSetting } from '../utils/config.js';
+import { resolveHeadlessDefault } from '../model/llm.js';
 
 const LOG_PATH = dexterPath('gateway-debug.log');
 function debugLog(msg: string) {
@@ -157,8 +158,9 @@ async function handleInbound(cfg: GatewayConfig, inbound: WhatsAppInboundMessage
     }
 
     console.log(`Processing message with agent...`);
-    const model = getSetting('modelId', 'gpt-5.5') as string;
-    const modelProvider = getSetting('provider', 'openai') as string;
+    const headlessDefault = resolveHeadlessDefault();
+    const model = getSetting('modelId', headlessDefault.model) as string;
+    const modelProvider = getSetting('provider', headlessDefault.provider) as string;
 
     // If agent is already running for this session, enqueue for mid-run injection
     if (isSessionRunning(route.sessionKey)) {

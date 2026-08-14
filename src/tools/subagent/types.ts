@@ -44,6 +44,25 @@ const READ_ONLY_TOOLS = [
   'memory_get',
 ];
 
+/**
+ * Authoritative financial-data tools the verifier may use to independently
+ * re-fetch a figure. Deliberately excludes web/x search and memory — a claim is
+ * verified against the source-of-truth vendors, never against the web or a prior
+ * remembered value. get_options_chain and run_quality_screen are conditionally
+ * registered (absent when their key / local project is missing); stock_screener is
+ * always registered but returns an unsupported result on the SEC backend. Either
+ * way the allow-list is intersected with the live registry, so any name that isn't
+ * registered is simply absent from the verifier's tools.
+ */
+const VERIFIER_TOOLS = [
+  'get_financials',
+  'get_market_data',
+  'read_filings',
+  'stock_screener',
+  'get_options_chain',
+  'run_quality_screen',
+];
+
 const WORKER_PREAMBLE =
   'You are a subagent working on a single sub-task assigned by an orchestrator. ' +
   'You run in isolation: you cannot see the main conversation and you cannot ' +
@@ -70,6 +89,29 @@ export const SUBAGENT_TYPES: Record<string, SubagentTypeConfig> = {
     systemPrompt: `${WORKER_PREAMBLE}\n\nYou are a financial analysis worker. Pull the relevant financials, metrics, and market data, then deliver a focused quantitative analysis with the numbers that support it.`,
     tools: ['get_financials', 'get_market_data', 'stock_screener', 'read_filings'],
     maxIterations: 8,
+  },
+  'financial-data-verifier': {
+    whenToUse:
+      'Cross-check a specific financial figure (a ratio, price, margin, growth rate, market cap, debt level, IV, etc.) against authoritative tool data BEFORE you state it. Give it the ticker, the metric, and the value you are about to surface.',
+    systemPrompt:
+      `${WORKER_PREAMBLE}\n\n` +
+      'You are a financial-data VERIFIER. Your one job is to independently confirm or refute a ' +
+      'specific financial figure before it is stated to a user. You are given a ticker, the metric ' +
+      'in question, and the value about to be surfaced.\n\n' +
+      'Method: fetch the figure YOURSELF from the authoritative tools — get_financials for ' +
+      'statement lines and ratios, get_market_data for prices / insider / institutional data, ' +
+      'read_filings for a number stated in an SEC filing, get_options_chain for IV/greeks, ' +
+      'run_quality_screen for screen-gate metrics. Compare the tool-sourced value against the ' +
+      'claimed one. NEVER accept the claimed number on faith, and NEVER invent or estimate a value ' +
+      'from your own knowledge — if the tools do not return the figure, it is UNAVAILABLE.\n\n' +
+      'Return exactly one verdict:\n' +
+      '- VERIFIED — the tool value matches the claim (allow small rounding or reporting-period ' +
+      'differences, but note them).\n' +
+      '- MISMATCH — they differ; state BOTH the claimed value and the correct tool-sourced value.\n' +
+      '- UNAVAILABLE — no tool returns this figure; say so plainly and do not guess.\n\n' +
+      'Always cite the exact tool and the number it returned (with its period/date). Be terse and decisive.',
+    tools: VERIFIER_TOOLS,
+    maxIterations: 6,
   },
 };
 

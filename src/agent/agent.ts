@@ -1,6 +1,6 @@
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { StructuredToolInterface } from '@langchain/core/tools';
-import { callLlmWithMessages, streamLlmWithMessages } from '../model/llm.js';
+import { callLlmWithMessages, streamLlmWithMessages, resolveHeadlessDefault } from '../model/llm.js';
 import { getTools, getToolConcurrencyMap } from '../tools/registry.js';
 import { buildSystemPrompt, loadSoulDocument, loadRulesDocument } from './prompts.js';
 import { extractTextContent, hasToolCalls } from '../utils/ai-message.js';
@@ -20,7 +20,9 @@ import { runMemoryFlush, shouldRunMemoryFlush } from '../memory/flush.js';
 import { resolveProvider } from '../providers.js';
 
 
-const DEFAULT_MODEL = 'gpt-5.5';
+// The app-wide default when no model is passed: canonical NVIDIA Nemotron, with a
+// gpt-5.5 fallback when NVIDIA isn't keyed. Resolved lazily at agent-creation time
+// (not at module load) to stay clear of the agent↔llm circular-import init order.
 const DEFAULT_MAX_ITERATIONS = 10;
 const MAX_OVERFLOW_RETRIES = 2;
 const OVERFLOW_KEEP_ROUNDS = 3;
@@ -52,7 +54,7 @@ export class Agent {
     systemPrompt: string,
     concurrencyMap: Map<string, boolean>,
   ) {
-    this.model = config.model ?? DEFAULT_MODEL;
+    this.model = config.model ?? resolveHeadlessDefault().model;
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.tools = tools;
     this.toolMap = new Map(tools.map(t => [t.name, t]));
@@ -70,7 +72,7 @@ export class Agent {
   }
 
   static async create(config: AgentConfig = {}): Promise<Agent> {
-    const model = config.model ?? DEFAULT_MODEL;
+    const model = config.model ?? resolveHeadlessDefault().model;
     const allTools = getTools(model);
     const tools = config.toolAllowlist
       ? allTools.filter(t => config.toolAllowlist!.includes(t.name))

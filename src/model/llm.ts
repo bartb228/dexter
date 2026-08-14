@@ -14,6 +14,7 @@ import type { TokenUsage } from '@/agent/types';
 import { logger } from '@/utils';
 import { classifyError, isNonRetryableError } from '@/utils/errors';
 import { resolveProvider, getProviderById } from '@/providers';
+import { checkApiKeyExistsForProvider } from '@/utils/env';
 
 export const DEFAULT_PROVIDER = 'nvidia';
 // NVIDIA's free build platform. Default: Nemotron Super 49B (v1.5) — a reasoning-tuned
@@ -22,6 +23,29 @@ export const DEFAULT_PROVIDER = 'nvidia';
 // Faster alternatives via /model: mistral-large-3-675b (~1s), gpt-oss-20b (fast). The
 // larger Nemotron Super 120B is available too but is much slower (~21s+).
 export const DEFAULT_MODEL = 'nvidia:nvidia/llama-3.3-nemotron-super-49b-v1.5';
+
+// Fallback for a headless run when the default provider (NVIDIA) isn't keyed.
+export const FALLBACK_PROVIDER = 'openai';
+export const FALLBACK_MODEL = 'gpt-5.5';
+
+/**
+ * Default model + provider for a run with no persisted user setting — the WhatsApp
+ * gateway and cron jobs. Prefers the canonical NVIDIA Nemotron default, but falls back
+ * to OpenAI gpt-5.5 when no NVIDIA_API_KEY is configured, so a headless run never
+ * defaults to a provider it can't authenticate. (The interactive CLI passes an explicit
+ * model from `.dexter/settings.json`, so this is the no-settings / headless path only.)
+ *
+ * `hasKey` is injectable purely for testing; production callers use the default, which
+ * checks the real environment (and `.env`) for the provider's API key.
+ */
+export function resolveHeadlessDefault(
+  hasKey: (providerId: string) => boolean = checkApiKeyExistsForProvider,
+): { provider: string; model: string } {
+  if (hasKey(DEFAULT_PROVIDER)) {
+    return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
+  }
+  return { provider: FALLBACK_PROVIDER, model: FALLBACK_MODEL };
+}
 
 /**
  * Gets the fast model variant for the given provider.
